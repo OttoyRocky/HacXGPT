@@ -152,8 +152,8 @@ En distribuciones Linux nativas x86_64, todas las herramientas se instalan de fo
 ## 🚀 INSTALACIÓN RÁPIDA Y EJECUCIÓN
 
 ```bash
-git clone https://github.com/OttoyRocky/HacXGPT-Private.git
-cd HacXGPT-Private
+git clone https://github.com/OttoyRocky/HacXGPT.git
+cd HacXGPT
 chmod +x *.sh
 ./hacx_advanced.sh
 ```
@@ -178,6 +178,7 @@ chmod +x *.sh
 | **12** | Simular APT | Killchains completas de APT29, APT38, FIN7 |
 | **13** | Gap Analysis Dinámico | Cobertura en tiempo real vía `dynamic_gap_analysis.py` |
 | **14** | Análisis Nmap con IA | Parser inteligente de salidas Nmap con Ollama y `nmap_ai.py` |
+| **A** | Modo Anónimo | Activa/desactiva enrutamiento vía Tor + proxychains4 |
 | **C** | Cambiar Objetivo | Configura el `$TARGET` global |
 | **S** | Alternar Guardado | Activa/desactiva la captura automática de outputs |
 
@@ -219,7 +220,7 @@ sudo apt update && sudo apt install -y tor proxychains4
 ## 📁 ESTRUCTURA DEL PROYECTO
 
 ```
-HacXGPT-Private/
+HacXGPT/
 ├── hacx_advanced.sh         # Core principal y menú de navegación
 ├── track_technique.sh       # Telemetría y registro de técnicas MITRE
 ├── dynamic_gap_analysis.py  # Gap Analysis dinámico y generación de reportes
