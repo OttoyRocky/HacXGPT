@@ -1,4 +1,4 @@
-# 🛡️ HacXGPT v8.1 - MITRE ATT&CK Framework + IA Local
+# 🛡️ HacXGPT v8.2 - MITRE ATT&CK Framework + IA Local
 
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 ![Kali](https://img.shields.io/badge/Kali_Linux-557C94?style=for-the-badge&logo=kali-linux&logoColor=white)
@@ -8,52 +8,40 @@
 
 ## 📋 DESCRIPCIÓN
 
-**HacXGPT v8.1** es una herramienta educativa de ciberseguridad que combina el **framework MITRE ATT&CK Enterprise** completo con **IA local via Ollama**. Sin dependencias de APIs externas. Todo corre localmente.
+**HacXGPT v8.2** es una herramienta educativa de ciberseguridad y pentesting que combina el **framework MITRE ATT&CK Enterprise** completo con **ejecución real de herramientas**, **control de riesgo interactivo**, **telemetría dinámica de técnicas** e **IA local vía Ollama**. Sin dependencias de APIs externas. Todo se ejecuta localmente en tu sistema.
+
+---
 
 ## 🎯 CARACTERÍSTICAS PRINCIPALES
 
-- **IA Local (Ollama)**: Chat libre con LLM real — responde cualquier pregunta de ciberseguridad
-- **Detección automática de entorno**: `mistral:7b` en Windows/WSL, `tinyllama` en Raspberry Pi
-- **MITRE ATT&CK Enterprise**: 14 tácticas con técnicas detalladas
-- **Purple Team**: Ataque (🔴) + Defensa (🔵) + Detección (🟣) para 10+ técnicas
-- **Post-Explotación**: Windows, Linux y técnicas de evasión
-- **Simulación APT**: APT29, APT38, FIN7 con killchain completa
-- **Gap Analysis**: Heat map visual de cobertura
-- **Sistema TARGET**: Objetivo persistente en todos los módulos
+- **⚡ Ejecución Real de Comandos**: Módulos de Reconocimiento, Escaneo Web y Análisis de Red ejecutan herramientas reales (`whois`, `nslookup`, `dig`, `subfinder`, `theHarvester`, `whatweb`, `nikto`, `gobuster`, `curl`, `sslscan`, `nmap`, `traceroute`, `tcpdump`) con captura de outputs y fallbacks automáticos.
+- **🛡️ Control de Riesgo GuardEn (`confirm_risk`)**: Advertencia visual de riesgo (ALTO/MEDIO) con confirmación explícita `(s/N)` y despliegue del objetivo antes de ejecutar ataques o pruebas activas (`sqlmap`, `hydra`, `xsstrike`, `john`).
+- **📊 Telemetría & Tracking MITRE (`track_technique`)**: Registro automático en tiempo real de cada técnica ejecutada en `/tmp/hacx_techniques.json`.
+- **📈 Gap Analysis Dinámico (Menú 13)**: Fuente única de verdad respaldada por `dynamic_gap_analysis.py` que mide la cobertura en tiempo real, desglosa técnicas probadas vs. pendientes y exporta reportes.
+- **🛠️ Verificación Inteligente de Herramientas (`check_command`)**: Detección de entornos Debian/Ubuntu/Kali con verificación de vigencia de `apt update` (> 24hs) para prevenir errores HTTP 404 por mirrors desactualizados.
+- **🤖 IA Local (Ollama)**: Chat libre con LLM real — responde preguntas de ciberseguridad sin enviar datos fuera de tu red.
+- **💻 Detección Automática de Entorno**: Selecciona `mistral:7b` en Windows/WSL o `tinyllama` en Raspberry Pi de forma transparente.
+- **🟣 Purple Team & APT Simulation**: Simulación de tácticas de ataque (🔴), defensa (🔵) y detección (🟣), junto con killchains de APT29, APT38 y FIN7.
 
-## ⚙️ REQUISITOS
+---
+
+## ⚙️ REQUISITOS Y DEPENDENCIAS
 
 - Linux / Kali / macOS / WSL en Windows
 - Bash 4.0+
+- Python 3+
 - Ollama instalado con al menos un modelo
 
-\`\`\`bash
+```bash
+# Instalación de Ollama y modelos recomendados
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull mistral:7b    # Windows/WSL
-ollama pull tinyllama     # Raspberry Pi
-\`\`\`
+ollama pull tinyllama     # Raspberry Pi / Sistemas con recursos limitados
+```
 
-Herramientas de pentesting (opcionales):
-
-\`\`\`bash
-sudo apt install -y nmap nikto gobuster sqlmap hydra john aircrack-ng whatweb dirb whois
-\`\`\`
-
-## 🚀 INSTALACIÓN
-
-\`\`\`bash
-git clone https://github.com/OttoyRocky/HacXGPT-Private.git
-cd HacXGPT-Private
-chmod +x *.sh
-./hacx_advanced.sh
-\`\`\`
-
-## 📦 Dependencias y Herramientas
-
-### Instalación automática (recomendada)
+### Paquetes recomendados (Debian / Kali / Ubuntu)
 
 ```bash
-# Instalar todas las herramientas necesarias
 sudo apt update && sudo apt install -y \
     whois \
     dnsutils \
@@ -61,140 +49,124 @@ sudo apt update && sudo apt install -y \
     nikto \
     gobuster \
     ffuf \
+    sqlmap \
+    hydra \
+    john \
+    aircrack-ng \
+    whatweb \
+    dirb \
+    tcpdump \
     curl \
     wget \
     jq \
     python3 \
     python3-pip
 
-# Subfinder (subdominios)
+# Herramientas adicionales opcionales en Go:
 go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-
-# HTTPX (probes HTTP)
 go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-
-# Gau (URLs)
 go install -v github.com/lc/gau/v2/cmd/gau@latest
-
-# Modelo recomendado para Windows/WSL
-ollama pull mistral:7b
-
-# Modelos para Raspberry Pi (más livianos)
-ollama pull tinyllama
-ollama pull gemma:2b
-
-## 🗂️ WORDLISTS
-
-Las wordlists de dirb están disponibles en:
-
-```bash
-ls /usr/share/dirb/wordlists/
-# Más usada:
-/usr/share/dirb/wordlists/common.txt
 ```
 
-## 🔧 SOLUCIÓN DE PROBLEMAS COMUNES
+---
 
-### Error: "connection refused" en gobuster
-Usá HTTP en lugar de HTTPS:
+## 🚀 INSTALACIÓN Y EJECUCIÓN
+
 ```bash
-gobuster dir -u http://objetivo.com -w /usr/share/dirb/wordlists/common.txt
+git clone https://github.com/OttoyRocky/HacXGPT-Private.git
+cd HacXGPT-Private
+chmod +x *.sh
+./hacx_advanced.sh
 ```
 
-### Nikto muy lento en WSL
-Usá escaneo rápido con Tuning:
-```bash
-nikto -h https://ejemplo.com -Tuning 123
-```
+---
 
-### Herramienta no encontrada (whatweb, whois, dirb)
-```bash
-sudo apt install whatweb whois dirb -y
-```
+## 🎮 MENÚ PRINCIPAL DE NAVEGACIÓN
 
-### Detectar IP de Windows desde WSL (para Ollama)
-```bash
-ip route | grep default | awk '{print $3}'
-# Luego configurar:
-echo "OLLAMA_HOST=\"$(ip route | grep default | awk '{print $3}\'):11434\"" > ollama_config.sh
-```
+| Opción | Módulo | Descripción |
+| :--- | :--- | :--- |
+| **1** | Reconocimiento Básico | Exec: WHOIS, DNS, DIG/AXFR, Subfinder, IP Info, theHarvester |
+| **2** | Escaneo Web | Exec: WhatWeb, Nikto, Gobuster/Dirb, Headers, OPTIONS, SSLScan |
+| **3** | Análisis de Red | Exec: Nmap Quick, Nmap Advanced, Ping, Traceroute, Netstat, Tcpdump |
+| **4** | Suite de Pentesting | Exec con `confirm_risk`: Metasploit, SQLMap, Hydra, XSStrike, John |
+| **5** | Generar Reportes | Exportación de logs y hallazgos guardados |
+| **6** | Herramientas Avanzadas | Escaneos especializados y utilidades avanzadas |
+| **7** | Chat Libre con IA Local | Interacción con LLM local vía Ollama |
+| **8** | Escaneo Sigiloso | Escaneo Nmap en modos de evasión con tracking T1046 |
+| **9** | Matriz MITRE ATT&CK | Catálogo interactivo de 14 tácticas Enterprise |
+| **10** | Modo Purple Team | Matriz de Ataque + Defensa + Detección |
+| **11** | Post-Explotación | Técnicas de persistencia y evasión Windows/Linux |
+| **12** | Simular APT | Killchains completas de APT29, APT38, FIN7 |
+| **13** | Gap Analysis Dinámico | Cobertura en tiempo real vía `dynamic_gap_analysis.py` |
+| **14** | Análisis Nmap con IA | Parser inteligente de salidas XML/texto de Nmap con Ollama |
+| **C** | Cambiar Objetivo | Configura el `$TARGET` global |
+| **S** | Alternar Guardado | Activa/desactiva la captura automática de outputs |
+
+---
 
 ## 🤖 IA LOCAL — CÓMO FUNCIONA
 
-El Módulo 7 (Chat Libre) combina respuestas estructuradas con IA real:
+El **Módulo 7 (Chat Libre)** combina respuestas estructuradas por palabras clave con inferencia en tiempo real:
 
-| Modo | Cuándo | Qué hace |
-|------|--------|----------|
-| Keywords | Pregunta con tema conocido | Respuesta estructurada MITRE |
-| IA (Ollama) | Pregunta libre sin match | LLM responde en tiempo real |
+| Modo | Condición | Comportamiento |
+| :--- | :--- | :--- |
+| **Keywords** | Pregunta con tema reconocido | Respuesta estructurada MITRE instantánea |
+| **IA (Ollama)** | Pregunta libre | Consulta directa al LLM local en tiempo real |
 
-Detección automática de entorno:
-- **Windows/WSL** → conecta a `172.20.160.1:11434` con `mistral:7b`
-- **Raspberry Pi / Linux nativo** → conecta a `localhost:11434` con `tinyllama`
+**Detección de entorno**:
+- **Windows/WSL**: Conecta al host WSL (`172.x.x.x:11434`) usando `mistral:7b`.
+- **Linux Nativo / Raspberry Pi**: Conecta a `localhost:11434` usando `tinyllama` / `gemma:2b`.
 
-> **Nota WSL**: Ollama debe correr con `$env:OLLAMA_HOST="0.0.0.0:11434"; ollama serve`
+---
 
-## 🎮 USO
+## 📁 ESTRUCTURA DEL PROYECTO
 
-\`\`\`bash
-./hacx_advanced.sh
-\`\`\`
-
-| Opción | Módulo |
-|--------|--------|
-| 1-8 | Reconocimiento, escaneo, explotación |
-| 7 | Chat libre con IA local |
-| 9 | Matriz MITRE ATT&CK completa |
-| 10 | Purple Team por técnica |
-| 11 | Post-Explotación |
-| 12 | Simulación APT |
-| 13 | Gap Analysis |
-| 14 | Análisis nmap con IA |
-| C | Cambiar objetivo |
-| S | Guardar resultados |
-
-## 📁 ESTRUCTURA
-
-\`\`\`
+```
 HacXGPT-Private/
-├── hacx_advanced.sh       # Script principal
-├── ollama_integration.sh  # Módulo IA local
-├── mitre_data.sh          # Base de datos MITRE principal
-├── mitre_extras_1.sh      # MITRE: Reconnaissance
-├── mitre_extras_2.sh      # MITRE: Execution/Persistence
-├── mitre_extras_3.sh      # MITRE: Exfiltration/Impact
-├── nmap_ai.py             # Módulo 14: análisis nmap con IA
-└── docs/
-    ├── USO.md
-    └── MITRE_ATTACK.md
-\`\`\`
+├── hacx_advanced.sh         # Core principal y menú de navegación
+├── track_technique.sh       # Telemetría y registro de técnicas MITRE
+├── dynamic_gap_analysis.py  # Gap Analysis dinámico y generación de reportes
+├── nmap_ai.py               # Módulo 14: análisis de nmapas asistido por IA
+├── ollama_integration.sh    # Cliente e integración con Ollama LLM
+├── mitre_data.sh            # Base de conocimientos MITRE principal
+├── mitre_extras_1.sh        # Tácticas MITRE: Reconnaissance & Resource Dev
+├── mitre_extras_2.sh        # Tácticas MITRE: Execution, Persistence, Evasion
+├── mitre_extras_3.sh        # Tácticas MITRE: Exfiltration & Impact
+├── run_gap_analysis.sh      # Launcher alternativo de Gap Analysis
+└── core/
+    └── guarden.sh           # GuardEn: validaciones y confirm_risk()
+```
+
+---
 
 ## 🔄 CHANGELOG
 
-| Versión | Fecha | Cambios |
-|---------|-------|---------|
-| v8.2 | Abril 2026 | Gap Analysis dinámico, tracking MITRE, fix dependencias, troubleshooting |
-| v8.1 | Abril 2026 | IA local Ollama, detección automática Pi vs Windows/WSL |
-| v8.0 | Marzo 2026 | MITRE completo, Purple Team, APT Sims, Gap Analysis |
-| v7.0 | Anterior | Chat libre, escaneo sigiloso |
+| Versión | Fecha | Cambios Principales |
+| :--- | :--- | :--- |
+| **v8.2** | Septiembre 2026 | Conversión de Reconocimiento, Web y Red a ejecuciones reales; integración de `confirm_risk()` con paso de objetivo dinámico; telemetría en tiempo real con `track_technique()`; unificación de Gap Analysis en `dynamic_gap_analysis.py`; y validación inteligente de `apt update` en `check_command()`. |
+| **v8.1** | Abril 2026 | Integración de IA local Ollama con autodetección de entorno (Windows/WSL vs Raspberry Pi). |
+| **v8.0** | Marzo 2026 | Implementación de Matriz MITRE completa, Purple Team, simulaciones APT y Gap Analysis inicial. |
+| **v7.0** | Anterior | Chat libre por palabras clave y utilidades de escaneo. |
+
+---
 
 ## ⚠️ AVISO LEGAL
 
-Uso exclusivo para fines educativos y auditorías autorizadas.
+Esta herramienta ha sido desarrollada exclusivamente para **fines educativos y auditorías de seguridad autorizadas**.
 
-- ✅ Solo contra sistemas propios o con permiso documentado
-- ❌ Prohibido sin autorización explícita
-- El usuario asume toda responsabilidad legal y ética
+- ✅ Usar únicamente contra sistemas propios o con autorización explícita documentada.
+- ❌ Queda estrictamente prohibido su uso para actividades no autorizadas.
+- Los desarrolladores no se responsabilizan por el mal uso o daños causados por esta herramienta.
 
-## 📚 RECURSOS
+---
+
+## 📚 RECURSOS Y REFERENCIAS
 
 - [MITRE ATT&CK Enterprise](https://attack.mitre.org/)
-- [Ollama](https://ollama.com/)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [Kali Linux Docs](https://www.kali.org/docs/)
+- [Ollama Framework](https://ollama.com/)
+- [OWASP Foundation](https://owasp.org/)
+- [Kali Linux Documentation](https://www.kali.org/docs/)
 
-## 📧 CONTACTO
-
-Issues y contribuciones bienvenidas via GitHub.
+---
 
 © 2026 OttoyRocky — MIT License
