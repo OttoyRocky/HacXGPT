@@ -58,6 +58,21 @@ TARGET=""       # Objetivo global persistente (IP o dominio)
 SAVE_MODE=false
 OUTPUT_FILE="hacxgpt_$(date +%Y%m%d_%H%M%S).log"
 
+# ============================================
+# MODO ANONIMO (proxychains + Tor)
+# ============================================
+ANON_MODE=false
+
+# Ejecuta un comando con proxychains si ANON_MODE=true
+anon_exec() {
+    local cmd="$1"
+    if [[ "$ANON_MODE" == true ]]; then
+        proxychains -q bash -c "$cmd" 2>&1
+    else
+        bash -c "$cmd" 2>&1
+    fi
+}
+
 # Valida que el string sea una IP o un dominio válido
 validar_objetivo() {
     local obj="$1"
@@ -2995,10 +3010,15 @@ while true; do
     else
         echo -e "${YELLOW}💾  S. ${NC} Guardar Resultados ${RED}[INACTIVO]${NC}"
     fi
+    if [[ "$ANON_MODE" == true ]]; then
+        echo -e "  ${GREEN}🟢  A.${NC}  Modo Anónimo ${GREEN}[ACTIVO — proxychains+Tor]${NC}"
+    else
+        echo -e "  ${RED}⚫  A.${NC}  Modo Anónimo ${RED}[INACTIVO]${NC}"
+    fi
     echo -e "${RED}❌  0. ${NC} Salir"
     echo ""
 
-    read -p "🎯 Selecciona opción [0-14, C, S]: " main_opcion
+    read -p "🎯 Selecciona opción [0-14, C, S, A]: " main_opcion
 
     case $main_opcion in
         1) reconocimiento_basico ;;
@@ -3018,6 +3038,30 @@ while true; do
             python3 nmap_ai.py
             ;;
         [Cc]) preguntar_objetivo ;;
+        [Aa])
+            if [[ "$ANON_MODE" == false ]]; then
+                if check_command proxychains4 && check_command tor; then
+                    if ! systemctl is-active --quiet tor 2>/dev/null; then
+                        echo -e "${YELLOW}⚡ Iniciando servicio Tor...${NC}"
+                        sudo systemctl start tor 2>/dev/null || service tor start 2>/dev/null
+                        sleep 2
+                    fi
+                    ANON_MODE=true
+                    echo ""
+                    echo -e "${GREEN}🟢 Modo Anónimo ACTIVADO — tráfico via Tor/proxychains${NC}"
+                    echo -e "${YELLOW}⚠️  Verificá con: proxychains curl https://check.torproject.org/api/ip${NC}"
+                else
+                    echo ""
+                    echo -e "${RED}❌ Faltan dependencias. Instalá con:${NC}"
+                    echo -e "${YELLOW}   sudo apt install -y tor proxychains4${NC}"
+                fi
+            else
+                ANON_MODE=false
+                echo ""
+                echo -e "${RED}⚫ Modo Anónimo DESACTIVADO${NC}"
+            fi
+            sleep 1
+            ;;
         [Ss])
             if [[ "$SAVE_MODE" == false ]]; then
                 SAVE_MODE=true
