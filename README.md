@@ -194,6 +194,28 @@ El **Módulo 7 (Chat Libre)** combina respuestas estructuradas por palabras clav
 
 ---
 
+## 🔒 MODO ANÓNIMO
+
+HacXGPT incluye un **Modo Anónimo** opcional que enruta el tráfico saliente de las herramientas de red a través de la red **Tor** utilizando **proxychains4**.
+
+### 🛠️ Instalación de Dependencias
+Para utilizar el modo anónimo, asegurate de tener instalados los paquetes de `tor` y `proxychains4`:
+
+```bash
+sudo apt update && sudo apt install -y tor proxychains4
+```
+
+### 🚀 Activación y Verificación
+1. **En el Menú Principal**: Presioná la tecla `A` para alternar entre `ANON_MODE=true` y `ANON_MODE=false`. El banner mostrará el indicador de estado correspondiente (`🟢 ANON: ON` o `⚫ ANON: OFF`).
+2. **Verificación de Enrutamiento**: Para verificar que el tráfico sale correctamente por la red Tor desde la terminal, ejecutá:
+   ```bash
+   proxychains curl https://check.torproject.org/api/ip
+   ```
+
+> ⚠️ **Advertencia sobre Raw Sockets**: Los escaneos sigilosos (menú 8) que utilizan paquetes crudos / raw sockets (`-sS`, `-sF`, `-sX`, `-sN`, `-sU`) **no son compatibles con proxychains** debido a que `LD_PRELOAD` solo intercepta llamadas a sockets de nivel de aplicación (`connect()`). Si el Modo Anónimo está activo durante estas pruebas, el script emitirá una advertencia y ejecutará la herramienta de forma directa sin el prefijo de proxy.
+
+---
+
 ## 📁 ESTRUCTURA DEL PROYECTO
 
 ```
@@ -218,7 +240,7 @@ HacXGPT-Private/
 
 | Versión | Fecha | Cambios Principales |
 | :--- | :--- | :--- |
-| **v8.2** | Septiembre 2026 | Conversión de Reconocimiento, Web, Red, OSINT y Post-Explotación (Linux/Windows/Evasión) a ejecuciones reales; integración de `confirm_risk()` con paso de objetivo dinámico; telemetría en tiempo real con `track_technique()`; unificación de Gap Analysis en `dynamic_gap_analysis.py`; unificación de `nmap_ai.py` con resolución dinámica de Ollama; y validación inteligente de `apt update` en `check_command()`. |
+| **v8.2** | Septiembre 2026 | Integración del **Modo Anónimo (Tor + proxychains4)** con alternador visual e inspección de servicios; conversión de Reconocimiento, Web, Red, OSINT y Post-Explotación (Linux/Windows/Evasión) a ejecuciones reales; integración de `confirm_risk()` con paso de objetivo dinámico; telemetría en tiempo real con `track_technique()`; unificación de Gap Analysis en `dynamic_gap_analysis.py`; unificación de `nmap_ai.py` con resolución dinámica de Ollama; y validación inteligente de `apt update` en `check_command()`. |
 | **v8.1** | Abril 2026 | Integración de IA local Ollama con autodetección de entorno (Windows/WSL vs Raspberry Pi). |
 | **v8.0** | Marzo 2026 | Implementación de Matriz MITRE completa, Purple Team, simulaciones APT y Gap Analysis inicial. |
 | **v7.0** | Anterior | Chat libre por palabras clave y utilidades de escaneo. |
