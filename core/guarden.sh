@@ -27,7 +27,19 @@ require_tool() {
 
 confirm_risk() {
     local module="$1"
-    local level="${2:-MEDIO}"
-    echo "⚠️  [RIESGO: $level] Módulo: $module | Target: ${TARGET:-NO DEFINIDO}"
-    [[ -t 0 ]] && read -r -p "¿Continuar? (s/N): " answer && [[ "${answer,,}" =~ ^s ]] || exit 0
+    local level="${2:-ALTO}"
+    local target="${3:-${TARGET:-NO DEFINIDO}}"
+    echo ""
+    echo -e "\e[0;31m⚠️  [ADVERTENCIA DE RIESGO: $level]\e[0m"
+    echo -e "\e[1;33m   Módulo: $module | Objetivo: $target\e[0m"
+    echo -e "\e[1;33m   ¡ATENCIÓN! Esta es una acción activa/potencialmente disruptiva contra el objetivo.\e[0m"
+    echo ""
+    local answer=""
+    read -r -p "¿Confirmas la ejecución de esta acción? (s/N): " answer
+    if [[ "${answer,,}" =~ ^s ]]; then
+        return 0
+    else
+        echo -e "\e[0;31m❌ Operación cancelada por el usuario.\e[0m"
+        return 1
+    fi
 }

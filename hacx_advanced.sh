@@ -9,9 +9,20 @@ else
     echo -e "\e[1;33m⚠️  data/mitre_registry.sh no encontrado.\e[0m"
 fi
 
+# Cargar validaciones de seguridad (confirm_risk, etc.)
+if [ -f "$SCRIPT_DIR/core/guarden.sh" ]; then
+    source "$SCRIPT_DIR/core/guarden.sh"
+    set +e +u 2>/dev/null || true
+fi
+
 # Cargar integracion Ollama
 if [ -f "$SCRIPT_DIR/ollama_integration.sh" ]; then
     source "$SCRIPT_DIR/ollama_integration.sh"
+fi
+
+# Cargar tracker de tecnicas MITRE
+if [ -f "$SCRIPT_DIR/track_technique.sh" ]; then
+    source "$SCRIPT_DIR/track_technique.sh"
 fi
 
 # ============================================
@@ -84,8 +95,38 @@ save_output() {
 # ============================================
 check_command() {
     local cmd="$1"
+    local install_cmd="${2:-}"
     if ! command -v "$cmd" &>/dev/null; then
-        echo -e "${RED}❌ '$cmd' no está instalado. Instálalo primero.${NC}"
+        echo -e "${RED}❌ '$cmd' no está instalado.${NC}"
+
+        # Detección de sistema basado en Debian/Ubuntu (APT)
+        if [ -f /etc/debian_version ] || command -v apt &>/dev/null; then
+            local stamp_file="/var/lib/apt/periodic/update-success-stamp"
+            local need_apt_update=false
+
+            if [ -f "$stamp_file" ]; then
+                local now_sec
+                now_sec=$(date +%s 2>/dev/null || echo 0)
+                local stamp_sec
+                stamp_sec=$(stat -c %Y "$stamp_file" 2>/dev/null || stat -f %m "$stamp_file" 2>/dev/null || echo 0)
+                local age=$(( now_sec - stamp_sec ))
+                if (( age > 86400 || age < 0 )); then
+                    need_apt_update=true
+                fi
+            else
+                need_apt_update=true
+            fi
+
+            if [ "$need_apt_update" = true ]; then
+                echo -e "${YELLOW}⚠️  Tu lista de paquetes puede estar desactualizada, corré 'sudo apt update' primero.${NC}"
+            fi
+        fi
+
+        if [ -n "$install_cmd" ]; then
+            echo -e "${YELLOW}💡 Sugerencia de instalación:${NC} $install_cmd"
+        else
+            echo -e "${YELLOW}💡 Sugerencia de instalación:${NC} sudo apt install $cmd"
+        fi
         return 1
     fi
     return 0
@@ -160,78 +201,243 @@ reconocimiento_basico() {
         
         case $opcion in
             1)
-                read -p "🌐 Dominio para WHOIS: " dominio
-                if [ -n "$dominio" ] && validate_domain "$dominio"; then
-                    if check_command whois; then
-                        echo ""
-                        echo -e "${YELLOW}🔍 Ejecutando: whois $dominio${NC}"
-                        echo ""
-                        output=$(whois "$dominio" | head -50)
-                        echo "$output"
-                        save_output "[WHOIS $dominio]\n$output"
+                read -p "🌐 Dominio para WHOIS [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
+                if [ -n "$dominio" ]; then
+                    echo ""
+                    echo -e "${YELLOW}🔍 Ejecutando: whois $dominio${NC}"
+                    echo ""
+                    output=""
+                    if command -v whois &>/dev/null; then
+                        output=$(whois "$dominio" 2>&1 | head -60)
+                    else
+                        echo -e "${CYAN}ℹ️ 'whois' no disponible localmente; consultando servidor RDAP REST...${NC}"
+                        output=$(curl -s "https://rdap.org/domain/$dominio" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(f'Domain: {d.get(\"ldhName\", \"N/A\")}')
+    print(f'Handle: {d.get(\"handle\", \"N/A\")}')
+    print(f'Status: {d.get(\"status\", [])}')
+    events = {e.get(\"eventAction\"): e.get(\"eventDate\") for e in d.get(\"events\", [])}
+    print(f'Created: {events.get(\"registration\", \"N/A\")}')
+    print(f'Updated: {events.get(\"last changed\", \"N/A\")}')
+    print(f'Expires: {events.get(\"expiration\", \"N/A\")}')
+except Exception as e:
+    print('Error al obtener datos RDAP.')
+" 2>/dev/null)
                     fi
+                    echo "$output"
+                    save_output "[WHOIS $dominio]\n$output"
+                    type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (WHOIS)"
                 fi
                 ;;
             2)
-                read -p "🌐 Dominio para NSLOOKUP: " dominio
-                if [ -n "$dominio" ] && validate_domain "$dominio"; then
-                    if check_command nslookup; then
-                        echo ""
-                        echo -e "${YELLOW}🔍 Ejecutando: nslookup $dominio${NC}"
-                        echo ""
-                        output=$(nslookup "$dominio")
-                        echo "$output"
-                        save_output "[NSLOOKUP $dominio]\n$output"
+                read -p "🌐 Dominio para NSLOOKUP [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
+                if [ -n "$dominio" ]; then
+                    echo ""
+                    echo -e "${YELLOW}🔍 Ejecutando: nslookup $dominio${NC}"
+                    echo ""
+                    if command -v nslookup &>/dev/null; then
+                        output=$(nslookup "$dominio" 2>&1)
+                    else
+                        echo -e "${CYAN}ℹ️ 'nslookup' no disponible; ejecutando resolución host...${NC}"
+                        output=$(host "$dominio" 2>&1)
                     fi
+                    echo "$output"
+                    save_output "[NSLOOKUP $dominio]\n$output"
+                    type track_technique &>/dev/null && track_technique "T1590" "Gather Victim Network Information (DNS)"
                 fi
                 ;;
             3)
-                read -p "🌐 Dominio para DIG: " dominio
-                if [ -n "$dominio" ] && validate_domain "$dominio"; then
-                    if check_command dig; then
-                        echo ""
-                        echo -e "${YELLOW}🔍 Ejecutando: dig $dominio ANY${NC}"
-                        echo ""
-                        output=$(dig "$dominio" ANY +short)
+                read -p "🌐 Dominio para DIG [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
+                if [ -n "$dominio" ]; then
+                    echo ""
+                    echo -e "${YELLOW}🔍 Ejecutando: dig $dominio (Registros ANY, A, MX, NS, TXT)${NC}"
+                    echo ""
+                    if command -v dig &>/dev/null; then
+                        output=$(dig "$dominio" ANY +noall +answer 2>&1)
+                        if [[ -z "$output" ]]; then
+                            output=$(dig "$dominio" A AAAA MX NS TXT +short 2>&1)
+                        fi
+                        echo -e "${GREEN}--- Respuesta DNS ---${NC}"
                         echo "$output"
-                        save_output "[DIG $dominio]\n$output"
+                        
+                        echo ""
+                        echo -e "${YELLOW}🔍 Verificando Transferencia de Zona (AXFR)...${NC}"
+                        ns_servers=$(dig "$dominio" NS +short)
+                        for ns in $ns_servers; do
+                            axfr_res=$(dig AXFR "$dominio" "@$ns" +short 2>&1)
+                            if [[ -n "$axfr_res" && "$axfr_res" != *"failed"* && "$axfr_res" != *"refused"* ]]; then
+                                echo -e "${RED}⚠️ Transferencia de Zona PERMITIDA en $ns:${NC}\n$axfr_res"
+                            else
+                                echo -e "${GREEN}✅ AXFR denegado en $ns${NC}"
+                            fi
+                        done
+                    else
+                        echo -e "${CYAN}ℹ️ 'dig' no disponible; ejecutando nslookup -type=any...${NC}"
+                        output=$(nslookup -type=any "$dominio" 2>&1)
+                        echo "$output"
                     fi
+                    save_output "[DIG $dominio]\n$output"
+                    type track_technique &>/dev/null && track_technique "T1590.002" "DNS Enumeration (DIG/AXFR)"
                 fi
                 ;;
             4)
-                read -p "🌐 Dominio para buscar subdominios: " dominio
+                read -p "🌐 Dominio para buscar subdominios [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
                 if [ -n "$dominio" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA SUBDOMINIOS:${NC}"
+                    echo -e "${YELLOW}🔍 Ejecutando búsqueda real de subdominios para $dominio...${NC}"
                     echo ""
-                    echo "• subfinder -d $dominio"
-                    echo "• assetfinder --subs-only $dominio"
-                    echo "• amass enum -d $dominio"
-                    echo "• gau $dominio | cut -d '/' -f3 | sort -u"
+                    
+                    found_subs=()
+                    
+                    if command -v subfinder &>/dev/null; then
+                        echo -e "${CYAN}▶ Ejecutando subfinder...${NC}"
+                        mapfile -t subs_sf < <(subfinder -d "$dominio" -silent 2>/dev/null)
+                        found_subs+=("${subs_sf[@]}")
+                    fi
+                    
+                    if command -v assetfinder &>/dev/null; then
+                        echo -e "${CYAN}▶ Ejecutando assetfinder...${NC}"
+                        mapfile -t subs_af < <(assetfinder --subs-only "$dominio" 2>/dev/null)
+                        found_subs+=("${subs_af[@]}")
+                    fi
+                    
+                    echo -e "${CYAN}▶ Consultando registros de certificados SSL/TLS (CRT.sh)...${NC}"
+                    crt_subs=$(curl -s "https://crt.sh/?q=%25.$dominio&output=json" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    subs = set()
+    for entry in data:
+        name = entry.get('name_value', '')
+        for s in name.split('\n'):
+            s = s.strip()
+            if s and not s.startswith('*'):
+                subs.add(s)
+    for s in sorted(subs):
+        print(s)
+except Exception:
+    pass
+" 2>/dev/null)
+
+                    if [[ -n "$crt_subs" ]]; then
+                        while IFS= read -r line; do
+                            [[ -n "$line" ]] && found_subs+=("$line")
+                        done <<< "$crt_subs"
+                    fi
+
+                    if [ ${#found_subs[@]} -gt 0 ]; then
+                        unique_subs=$(printf "%s\n" "${found_subs[@]}" | sort -u)
+                        count=$(echo "$unique_subs" | grep -c .)
+                        echo ""
+                        echo -e "${GREEN}✅ Encontrados $count subdominios para $dominio:${NC}"
+                        echo "$unique_subs" | sed 's/^/  • /'
+                        save_output "[SUBDOMINIOS $dominio]\n$unique_subs"
+                    else
+                        echo -e "${YELLOW}⚠️ No se hallaron subdominios públicos en CRT.sh ni herramientas locales.${NC}"
+                    fi
+                    
+                    type track_technique &>/dev/null && track_technique "T1595" "Active Scanning / Subdomain Enumeration"
                 fi
                 ;;
             5)
-                read -p "📡 Dirección IP para información: " ip
-                if [ -n "$ip" ] && validate_ip "$ip"; then
+                read -p "📡 Dirección IP/Dominio para información [default: ${TARGET:-8.8.8.8}]: " ip
+                ip="${ip:-$TARGET}"
+                if [ -n "$ip" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA IP $ip:${NC}"
+                    echo -e "${YELLOW}🔍 Ejecutando análisis de IP y geolocalización para $ip...${NC}"
                     echo ""
-                    echo "• whois $ip"
-                    echo "• nslookup $ip"
-                    echo "• curl ipinfo.io/$ip"
-                    echo "• ping -c 4 $ip"
+                    
+                    echo -e "${CYAN}▶ Geolocalización e info de red (ipinfo.io):${NC}"
+                    geo_data=$(curl -s "https://ipinfo.io/$ip/json" 2>/dev/null)
+                    if [[ -n "$geo_data" && "$geo_data" != *"error"* ]]; then
+                        echo "$geo_data" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(f'  • IP:           {d.get(\"ip\", \"N/A\")}')
+    print(f'  • Hostname:     {d.get(\"hostname\", \"N/A\")}')
+    print(f'  • Ciudad:       {d.get(\"city\", \"N/A\")}')
+    print(f'  • Región:       {d.get(\"region\", \"N/A\")}')
+    print(f'  • País:         {d.get(\"country\", \"N/A\")}')
+    print(f'  • Organización: {d.get(\"org\", \"N/A\")}')
+    print(f'  • Coordenadas:  {d.get(\"loc\", \"N/A\")}')
+except Exception:
+    pass
+" 2>/dev/null
+                    fi
+                    
+                    echo ""
+                    echo -e "${CYAN}▶ Conectividad ICMP (ping):${NC}"
+                    if command -v ping &>/dev/null; then
+                        ping -c 4 "$ip" 2>&1 || ping -n 4 "$ip" 2>&1
+                    fi
+
+                    echo ""
+                    echo -e "${CYAN}▶ Registro WHOIS de IP:${NC}"
+                    if command -v whois &>/dev/null; then
+                        whois "$ip" 2>&1 | grep -iE 'netname|orgname|country|cidr|origin|descr' | head -15 | sed 's/^/  /'
+                    fi
+
+                    save_output "[INFO IP $ip]\n$geo_data"
+                    type track_technique &>/dev/null && track_technique "T1590.005" "IP Addresses Information"
                 fi
                 ;;
             6)
-                read -p "📧 Dominio para buscar emails: " dominio
+                read -p "📧 Dominio para buscar emails [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
                 if [ -n "$dominio" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA BUSCAR EMAILS:${NC}"
+                    echo -e "${YELLOW}🔍 Buscando cuentas de correo e infraestructura de email para $dominio...${NC}"
                     echo ""
-                    echo "• theHarvester -d $dominio -b google"
-                    echo "• hunter.io (herramienta web)"
-                    echo "• phonebook.cz"
-                    echo "• linkedin.com (búsqueda manual)"
+                    
+                    if command -v theHarvester &>/dev/null; then
+                        echo -e "${CYAN}▶ Ejecutando theHarvester...${NC}"
+                        theHarvester -d "$dominio" -b google 2>/dev/null | grep -i "@$dominio"
+                    fi
+                    
+                    echo -e "${CYAN}▶ Extrayendo identidades de correo en certificados SSL públicos (CRT.sh)...${NC}"
+                    curl -s "https://crt.sh/?q=%25.$dominio&output=json" 2>/dev/null | python3 -c "
+import sys, json, re
+try:
+    data = json.load(sys.stdin)
+    emails = set()
+    dom = '$dominio'
+    pattern = re.compile(r'[a-zA-Z0-9._%+-]+@' + re.escape(dom), re.IGNORECASE)
+    for entry in data:
+        val = str(entry)
+        for e in pattern.findall(val):
+            emails.add(e.lower())
+    if emails:
+        print('  ✅ Emails identificados en certificados:')
+        for email in sorted(emails):
+            print(f'     • {email}')
+    else:
+        print('  ℹ️ No se hallaron emails en certificados SSL públicos.')
+except Exception:
+    pass
+" 2>/dev/null
+
+                    echo ""
+                    echo -e "${CYAN}▶ Servidores de correo (MX) y Políticas (SPF/DMARC):${NC}"
+                    if command -v dig &>/dev/null; then
+                        echo -e "  📌 Servidores MX:"
+                        dig "$dominio" MX +short | sed 's/^/     • /'
+                        echo -e "  📌 Registro SPF (TXT):"
+                        dig "$dominio" TXT +short | grep -i "spf" | sed 's/^/     • /'
+                        echo -e "  📌 Registro DMARC (_dmarc.$dominio):"
+                        dig "_dmarc.$dominio" TXT +short | sed 's/^/     • /'
+                    else
+                        nslookup -type=mx "$dominio" 2>&1 | sed 's/^/     /'
+                    fi
+
+                    save_output "[EMAIL RECON $dominio]"
+                    type track_technique &>/dev/null && track_technique "T1589" "Gather Victim Identity Information (Emails)"
                 fi
                 ;;
             7)
@@ -262,10 +468,10 @@ escaneo_web() {
         echo ""
         echo "1. Detectar tecnologías (whatweb)"
         echo "2. Escanear vulnerabilidades (nikto)"
-        echo "3. Buscar directorios (dirb/gobuster)"
-        echo "4. Analizar headers HTTP"
-        echo "5. Probar métodos HTTP"
-        echo "6. SSL/TLS análisis"
+        echo "3. Buscar directorios (gobuster/dirb/ffuf)"
+        echo "4. Analizar headers HTTP (curl)"
+        echo "5. Probar métodos HTTP (OPTIONS/curl/nmap)"
+        echo "6. SSL/TLS análisis (sslscan/testssl/openssl)"
         echo "7. Volver al menú principal"
         echo ""
         
@@ -273,7 +479,8 @@ escaneo_web() {
         
         case $opcion in
             1)
-                read -p "🌐 URL para whatweb (ej: https://ejemplo.com): " url
+                read -p "🌐 URL para whatweb [default: https://${TARGET:-ejemplo.com}]: " url
+                url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
                     if check_command whatweb; then
                         echo ""
@@ -282,11 +489,15 @@ escaneo_web() {
                         output=$(whatweb "$url" 2>&1)
                         echo "$output"
                         save_output "[WHATWEB $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (WhatWeb)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar whatweb:${NC} sudo apt install whatweb"
                     fi
                 fi
                 ;;
             2)
-                read -p "🌐 URL para nikto (ej: https://ejemplo.com): " url
+                read -p "🌐 URL para nikto [default: https://${TARGET:-ejemplo.com}]: " url
+                url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
                     if check_command nikto; then
                         echo ""
@@ -295,55 +506,117 @@ escaneo_web() {
                         output=$(nikto -h "$url" 2>/dev/null)
                         echo "$output"
                         save_output "[NIKTO $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1595" "Active Scanning / Web Vulnerability Scan (Nikto)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar nikto:${NC} sudo apt install nikto"
                     fi
                 fi
                 ;;
             3)
-                read -p "🌐 URL para buscar directorios: " url
+                read -p "🌐 URL para buscar directorios [default: https://${TARGET:-ejemplo.com}]: " url
+                url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA BUSCAR DIRECTORIOS:${NC}"
-                    echo ""
-                    echo "• gobuster dir -u $url -w /usr/share/wordlists/dirb/common.txt"
-                    echo "• dirb $url"
-                    echo "• ffuf -u $url/FUZZ -w /usr/share/wordlists/dirb/common.txt"
-                    echo "• dirsearch -u $url -e php,html,js,txt"
+                    if command -v gobuster &>/dev/null; then
+                        read -p "📖 Ruta Wordlist [default: /usr/share/wordlists/dirb/common.txt]: " wl_val
+                        wl_val="${wl_val:-/usr/share/wordlists/dirb/common.txt}"
+                        if [[ -f "$wl_val" ]]; then
+                            echo -e "${YELLOW}🔍 Ejecutando: gobuster dir -u $url -w $wl_val${NC}"
+                            echo ""
+                            output=$(gobuster dir -u "$url" -w "$wl_val" -q 2>&1 | head -50)
+                        else
+                            echo -e "${YELLOW}⚠️ Wordlist no encontrada en $wl_val. Ejecutando gobuster con wordlist reducida...${NC}"
+                            output=$(gobuster dir -u "$url" -w <(echo -e "admin\nlogin\nwp-admin\napi\nbackup\nconfig\ndashboard\nrobots.txt") -q 2>&1)
+                        fi
+                        echo "$output"
+                        save_output "[GOBUSTER $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1083" "File and Directory Discovery (Gobuster)"
+                    elif command -v dirb &>/dev/null; then
+                        echo -e "${YELLOW}🔍 Ejecutando: dirb $url${NC}"
+                        echo ""
+                        output=$(dirb "$url" 2>&1 | head -50)
+                        echo "$output"
+                        save_output "[DIRB $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1083" "File and Directory Discovery (Dirb)"
+                    else
+                        echo -e "${RED}❌ Ni gobuster ni dirb están instalados.${NC}"
+                        echo -e "${YELLOW}💡 Para instalar gobuster o dirb:${NC} sudo apt install gobuster  (o sudo apt install dirb)"
+                    fi
                 fi
                 ;;
             4)
-                read -p "🌐 URL para analizar headers: " url
+                read -p "🌐 URL para analizar headers [default: https://${TARGET:-ejemplo.com}]: " url
+                url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
                     if check_command curl; then
                         echo ""
-                        echo -e "${YELLOW}🔍 Ejecutando: curl -I $url${NC}"
+                        echo -e "${YELLOW}🔍 Ejecutando: curl -I -L $url${NC}"
                         echo ""
-                        output=$(curl -I "$url" 2>&1)
+                        output=$(curl -I -L "$url" 2>&1)
                         echo "$output"
                         save_output "[HEADERS $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (HTTP Headers)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar curl:${NC} sudo apt install curl"
                     fi
                 fi
                 ;;
             5)
-                read -p "🌐 URL para probar métodos HTTP: " url
+                read -p "🌐 URL para probar métodos HTTP [default: https://${TARGET:-ejemplo.com}]: " url
+                url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA MÉTODOS HTTP:${NC}"
-                    echo ""
-                    echo "• curl -X OPTIONS $url"
-                    echo "• nmap --script http-methods --script-args http-methods.url-path='/' $url"
-                    echo "• httprint -h $url -s /usr/share/httprint/signatures.txt"
+                    if check_command curl; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Probando métodos HTTP (OPTIONS, TRACE, PUT, DELETE) con curl en $url...${NC}"
+                        echo ""
+                        output=""
+                        output+="--- Petición OPTIONS ---\n"
+                        output+=$(curl -i -s -X OPTIONS "$url" | head -20)
+                        output+="\n\n--- Petición TRACE ---\n"
+                        output+=$(curl -i -s -X TRACE "$url" | head -15)
+                        
+                        if command -v nmap &>/dev/null; then
+                            echo -e "${CYAN}▶ Ejecutando script nmap http-methods...${NC}"
+                            nmap_methods=$(nmap --script http-methods "$TARGET" 2>&1)
+                            output+="\n\n--- Nmap HTTP Methods ---\n$nmap_methods"
+                        fi
+                        
+                        echo -e "$output"
+                        save_output "[HTTP METHODS $url]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (HTTP Methods)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar curl:${NC} sudo apt install curl"
+                    fi
                 fi
                 ;;
             6)
-                read -p "🌐 Dominio para análisis SSL: " dominio
+                read -p "🌐 Dominio/Host para análisis SSL [default: ${TARGET:-ejemplo.com}]: " dominio
+                dominio="${dominio:-$TARGET}"
                 if [ -n "$dominio" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS PARA SSL/TLS:${NC}"
-                    echo ""
-                    echo "• sslscan $dominio"
-                    echo "• testssl.sh $dominio"
-                    echo "• nmap --script ssl-enum-ciphers -p 443 $dominio"
-                    echo "• openssl s_client -connect $dominio:443 -servername $dominio"
+                    output=""
+                    if command -v sslscan &>/dev/null; then
+                        echo -e "${YELLOW}🔍 Ejecutando: sslscan $dominio${NC}"
+                        echo ""
+                        output=$(sslscan --no-failed "$dominio" 2>&1)
+                    elif command -v testssl.sh &>/dev/null || command -v testssl &>/dev/null; then
+                        testssl_cmd=$(command -v testssl.sh || command -v testssl)
+                        echo -e "${YELLOW}🔍 Ejecutando: $testssl_cmd $dominio${NC}"
+                        echo ""
+                        output=$($testssl_cmd --fast "$dominio" 2>&1 | head -60)
+                    elif command -v openssl &>/dev/null; then
+                        echo -e "${CYAN}ℹ️ 'sslscan' no instalado; ejecutando inspección de certificado con OpenSSL...${NC}"
+                        output=$(echo | openssl s_client -connect "$dominio:443" -servername "$dominio" 2>&1 | openssl x509 -noout -text 2>&1 | head -40)
+                    else
+                        echo -e "${RED}❌ Ninguna herramienta de SSL instalada (sslscan, testssl, openssl).${NC}"
+                        echo -e "${YELLOW}💡 Para instalar sslscan:${NC} sudo apt install sslscan"
+                    fi
+
+                    if [[ -n "$output" ]]; then
+                        echo "$output"
+                        save_output "[SSL SCAN $dominio]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1590" "Gather Victim Network Information (SSL/TLS)"
+                    fi
                 fi
                 ;;
             7)
@@ -372,11 +645,11 @@ analisis_red() {
         
         echo -e "${GREEN}📊 HERRAMIENTAS DE ANÁLISIS DE RED:${NC}"
         echo ""
-        echo "1. Escaneo básico de puertos (nmap)"
-        echo "2. Escaneo avanzado de servicios"
+        echo "1. Escaneo básico de puertos (nmap -F)"
+        echo "2. Escaneo avanzado de servicios (nmap -sV -sC)"
         echo "3. Ping a objetivo"
         echo "4. Traceroute a objetivo"
-        echo "5. Netstat (conexiones actuales)"
+        echo "5. Netstat (conexiones locales)"
         echo "6. Capturar tráfico (tcpdump)"
         echo "7. Volver al menú principal"
         echo ""
@@ -385,71 +658,120 @@ analisis_red() {
         
         case $opcion in
             1)
-                read -p "🎯 Objetivo para nmap (IP o dominio): " objetivo
+                read -p "🎯 Objetivo para nmap básico [default: ${TARGET:-127.0.0.1}]: " objetivo
+                objetivo="${objetivo:-$TARGET}"
                 if [ -n "$objetivo" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS NMAP BÁSICOS:${NC}"
-                    echo ""
-                    echo "• Escaneo rápido: nmap -F $objetivo"
-                    echo "• Detectar OS: nmap -O $objetivo"
-                    echo "• Todos los puertos: nmap -p- $objetivo"
-                    echo "• Con scripts: nmap -sC $objetivo"
+                    if check_command nmap; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando: nmap -F $objetivo${NC}"
+                        echo ""
+                        output=$(nmap -F "$objetivo" 2>&1)
+                        echo "$output"
+                        save_output "[NMAP BASIC $objetivo]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1046" "Network Service Scanning (Nmap Quick)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar nmap:${NC} sudo apt install nmap"
+                    fi
                 fi
                 ;;
             2)
-                read -p "🎯 Objetivo para escaneo avanzado: " objetivo
+                read -p "🎯 Objetivo para escaneo avanzado [default: ${TARGET:-127.0.0.1}]: " objetivo
+                objetivo="${objetivo:-$TARGET}"
                 if [ -n "$objetivo" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS ESCANEO AVANZADO:${NC}"
-                    echo ""
-                    echo "• Versiones de servicio: nmap -sV $objetivo"
-                    echo "• Scripts de vulnerabilidad: nmap --script vuln $objetivo"
-                    echo "• Escaneo UDP: nmap -sU -p 1-100 $objetivo"
-                    echo "• Timing agresivo: nmap -T4 -A $objetivo"
+                    if check_command nmap; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Ejecutando: nmap -sV -sC -T4 $objetivo${NC}"
+                        echo ""
+                        output=$(nmap -sV -sC -T4 "$objetivo" 2>&1)
+                        echo "$output"
+                        save_output "[NMAP ADVANCED $objetivo]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1046" "Network Service Scanning (Nmap Advanced)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar nmap:${NC} sudo apt install nmap"
+                    fi
                 fi
                 ;;
             3)
-                read -p "🎏 Objetivo para ping (IP o dominio): " objetivo
+                read -p "🎏 Objetivo para ping [default: ${TARGET:-8.8.8.8}]: " objetivo
+                objetivo="${objetivo:-$TARGET}"
                 if [ -n "$objetivo" ]; then
                     if check_command ping; then
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: ping -c 4 $objetivo${NC}"
                         echo ""
-                        output=$(ping -c 4 "$objetivo" 2>&1)
+                        output=$(ping -c 4 "$objetivo" 2>&1 || ping -n 4 "$objetivo" 2>&1)
                         echo "$output"
                         save_output "[PING $objetivo]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1018" "Remote System Discovery (Ping)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar ping:${NC} sudo apt install iputils-ping"
                     fi
                 fi
                 ;;
             4)
-                read -p "🎯 Objetivo para traceroute: " objetivo
+                read -p "🎯 Objetivo para traceroute [default: ${TARGET:-8.8.8.8}]: " objetivo
+                objetivo="${objetivo:-$TARGET}"
                 if [ -n "$objetivo" ]; then
                     echo ""
-                    echo -e "${YELLOW}🔍 Ejecutando: traceroute $objetivo${NC}"
-                    echo ""
-                    traceroute $objetivo 2>/dev/null || echo "Usando tracert..."
-                    tracert $objetivo 2>/dev/null || echo "Comando no disponible"
+                    output=""
+                    if command -v traceroute &>/dev/null; then
+                        echo -e "${YELLOW}🔍 Ejecutando: traceroute $objetivo${NC}"
+                        echo ""
+                        output=$(traceroute "$objetivo" 2>&1)
+                    elif command -v tracert &>/dev/null; then
+                        echo -e "${YELLOW}🔍 Ejecutando: tracert $objetivo${NC}"
+                        echo ""
+                        output=$(tracert "$objetivo" 2>&1)
+                    elif command -v mtr &>/dev/null; then
+                        echo -e "${YELLOW}🔍 Ejecutando: mtr --report -c 5 $objetivo${NC}"
+                        echo ""
+                        output=$(mtr --report -c 5 "$objetivo" 2>&1)
+                    else
+                        echo -e "${RED}❌ Ni traceroute, ni tracert, ni mtr están disponibles en este sistema.${NC}"
+                        echo -e "${YELLOW}💡 Para instalar traceroute:${NC} sudo apt install traceroute"
+                    fi
+
+                    if [[ -n "$output" ]]; then
+                        echo "$output"
+                        save_output "[TRACEROUTE $objetivo]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1016" "System Network Configuration Discovery (Traceroute)"
+                    fi
                 fi
                 ;;
             5)
                 echo ""
-                echo -e "${YELLOW}🔍 COMANDOS NETSTAT:${NC}"
+                echo -e "${YELLOW}🔍 Consultando conexiones activas y puertos escuchando localmente...${NC}"
                 echo ""
-                echo "• Conexiones activas: netstat -tulpn"
-                echo "• Todas las conexiones: netstat -ano"
-                echo "• Estadísticas: netstat -s"
-                echo "• Rutas: netstat -r"
+                output=""
+                if command -v netstat &>/dev/null; then
+                    output=$(netstat -tulpn 2>/dev/null || netstat -an 2>/dev/null | head -40)
+                elif command -v ss &>/dev/null; then
+                    output=$(ss -tulpn 2>/dev/null || ss -an 2>/dev/null | head -40)
+                else
+                    echo -e "${RED}❌ Ni netstat ni ss están disponibles.${NC}"
+                    echo -e "${YELLOW}💡 Para instalar netstat:${NC} sudo apt install net-tools"
+                fi
+
+                if [[ -n "$output" ]]; then
+                    echo "$output"
+                    save_output "[NETSTAT LOCAL]\n$output"
+                fi
                 ;;
             6)
-                read -p "🎯 Interfaz para capturar (ej: eth0): " interfaz
+                read -p "🎯 Interfaz para capturar (ej: eth0) [default: any]: " interfaz
+                interfaz="${interfaz:-any}"
                 if [ -n "$interfaz" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 COMANDOS TCPDUMP:${NC}"
-                    echo ""
-                    echo "• Capturar todo: sudo tcpdump -i $interfaz"
-                    echo "• Guardar a archivo: sudo tcpdump -i $interfaz -w captura.pcap"
-                    echo "• Filtrar por puerto: sudo tcpdump -i $interfaz port 80"
-                    echo "• Filtrar por IP: sudo tcpdump -i $interfaz host 192.168.1.1"
+                    if check_command tcpdump; then
+                        echo ""
+                        echo -e "${YELLOW}🔍 Capturando 20 paquetes en interfaz '$interfaz'...${NC}"
+                        echo ""
+                        output=$(sudo tcpdump -i "$interfaz" -c 20 2>&1)
+                        echo "$output"
+                        save_output "[TCPDUMP $interfaz]\n$output"
+                        type track_technique &>/dev/null && track_technique "T1040" "Network Sniffing (tcpdump)"
+                    else
+                        echo -e "${YELLOW}💡 Para instalar tcpdump:${NC} sudo apt install tcpdump"
+                    fi
                 fi
                 ;;
             7)
@@ -494,58 +816,111 @@ suite_pentesting() {
                 echo ""
                 echo -e "${YELLOW}🔍 METASPLOIT FRAMEWORK:${NC}"
                 echo ""
-                echo "• Iniciar: msfconsole"
-                echo "• Buscar exploit: search [nombre]"
-                echo "• Usar exploit: use exploit/[ruta]"
-                echo "• Mostrar opciones: show options"
-                echo "• Configurar: set RHOSTS [IP]"
-                echo "• Ejecutar: exploit"
-                echo ""
-                echo -e "${BLUE}📚 EJEMPLOS:${NC}"
-                echo "• EternalBlue: use exploit/windows/smb/ms17_010_eternalblue"
-                echo "• Reverse Shell: use exploit/multi/handler"
+                if command -v msfconsole &>/dev/null; then
+                    read -p "🎮 ¿Deseas lanzar msfconsole interactivo ahora? (s/N): " launch_msf
+                    if [[ "${launch_msf,,}" =~ ^s ]]; then
+                        if confirm_risk "Metasploit Framework (msfconsole)" "ALTO" "${TARGET:-[IP]}"; then
+                            msfconsole
+                        fi
+                    else
+                        echo "• Iniciar: msfconsole"
+                        echo "• Buscar exploit: search [nombre]"
+                        echo "• Usar exploit: use exploit/[ruta]"
+                        echo "• Mostrar opciones: show options"
+                        echo "• Configurar: set RHOSTS ${TARGET:-[IP]}"
+                        echo "• Ejecutar: exploit"
+                    fi
+                else
+                    echo "• Iniciar: msfconsole"
+                    echo "• Buscar exploit: search [nombre]"
+                    echo "• Usar exploit: use exploit/[ruta]"
+                    echo "• Mostrar opciones: show options"
+                    echo "• Configurar: set RHOSTS ${TARGET:-[IP]}"
+                    echo "• Ejecutar: exploit"
+                    echo ""
+                    echo -e "${YELLOW}💡 Para instalar Metasploit:${NC} curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall && chmod +x msfinstall && ./msfinstall"
+                fi
                 ;;
             2)
                 read -p "🌐 URL para sqlmap (ej: http://sitio.com?id=1): " url
                 if [ -n "$url" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 SQLMAP COMANDOS:${NC}"
-                    echo ""
-                    echo "• Detectar: sqlmap -u \"$url\""
-                    echo "• Obtener bases de datos: sqlmap -u \"$url\" --dbs"
-                    echo "• Obtener tablas: sqlmap -u \"$url\" -D [db] --tables"
-                    echo "• Dump de datos: sqlmap -u \"$url\" -D [db] -T [tabla] --dump"
-                    echo "• Shell: sqlmap -u \"$url\" --os-shell"
+                    if confirm_risk "SQL Injection (sqlmap)" "ALTO" "$url"; then
+                        if check_command sqlmap; then
+                            echo ""
+                            echo -e "${YELLOW}🔍 Ejecutando: sqlmap -u \"$url\" --batch --dbs${NC}"
+                            echo ""
+                            output=$(sqlmap -u "$url" --batch --dbs 2>&1)
+                            echo "$output"
+                            save_output "[SQLMAP $url]\n$output"
+                            type track_technique &>/dev/null && track_technique "T1190" "Exploit Public-Facing Application (SQLi)"
+                        else
+                            echo ""
+                            echo -e "${YELLOW}💡 Para instalar sqlmap:${NC} sudo apt install sqlmap  (o pip install sqlmap)"
+                        fi
+                    fi
                 fi
                 ;;
             3)
-                read -p "🎯 Objetivo para fuerza bruta (ej: ssh://192.168.1.1): " objetivo
+                read -p "🎯 Objetivo para fuerza bruta (ej: ssh://${TARGET:-192.168.1.1}): " objetivo
+                objetivo="${objetivo:-ssh://$TARGET}"
                 if [ -n "$objetivo" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 HYDRA COMANDOS:${NC}"
-                    echo ""
-                    echo "• SSH: hydra -l usuario -P passlist.txt ssh://$objetivo"
-                    echo "• FTP: hydra -l usuario -P passlist.txt ftp://$objetivo"
-                    echo "• HTTP POST: hydra -l admin -P passlist.txt $objetivo http-post-form"
-                    echo "• RDP: hydra -l administrador -P passlist.txt rdp://$objetivo"
+                    if confirm_risk "Fuerza Bruta (hydra)" "ALTO" "$objetivo"; then
+                        if check_command hydra; then
+                            read -p "👤 Usuario [default: admin]: " user_val
+                            user_val="${user_val:-admin}"
+                            read -p "📖 Ruta a Wordlist [default: /usr/share/wordlists/rockyou.txt]: " wl_val
+                            wl_val="${wl_val:-/usr/share/wordlists/rockyou.txt}"
+                            echo ""
+                            echo -e "${YELLOW}🔍 Ejecutando: hydra -l $user_val -P $wl_val $objetivo${NC}"
+                            echo ""
+                            output=$(hydra -l "$user_val" -P "$wl_val" "$objetivo" 2>&1)
+                            echo "$output"
+                            save_output "[HYDRA $objetivo]\n$output"
+                            type track_technique &>/dev/null && track_technique "T1110" "Brute Force (Hydra)"
+                        else
+                            echo ""
+                            echo -e "${YELLOW}💡 Para instalar hydra:${NC} sudo apt install hydra"
+                        fi
+                    fi
                 fi
                 ;;
             4)
-                read -p "🌐 URL para XSS testing: " url
+                read -p "🌐 URL para XSS testing (ej: http://sitio.com?q=test): " url
                 if [ -n "$url" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 XSSTRIKE COMANDOS:${NC}"
-                    echo ""
-                    echo "• Escaneo básico: python3 xsstrike.py -u \"$url\""
-                    echo "• Crawling: python3 xsstrike.py -u \"$url\" --crawl"
-                    echo "• Blind XSS: python3 xsstrike.py -u \"$url\" --blind"
-                    echo "• Con parámetros: python3 xsstrike.py -u \"$url?param=value\""
+                    if confirm_risk "XSS Testing (XSStrike)" "MEDIO" "$url"; then
+                        xsstrike_cmd=""
+                        if command -v xsstrike &>/dev/null; then
+                            xsstrike_cmd="xsstrike"
+                        elif command -v xsstrike.py &>/dev/null; then
+                            xsstrike_cmd="xsstrike.py"
+                        elif [ -f "xsstrike.py" ]; then
+                            xsstrike_cmd="python3 xsstrike.py"
+                        fi
+
+                        if [ -n "$xsstrike_cmd" ]; then
+                            echo ""
+                            echo -e "${YELLOW}🔍 Ejecutando: $xsstrike_cmd -u \"$url\"${NC}"
+                            echo ""
+                            output=$($xsstrike_cmd -u "$url" 2>&1)
+                            echo "$output"
+                            save_output "[XSSTRIKE $url]\n$output"
+                            type track_technique &>/dev/null && track_technique "T1059.007" "JavaScript XSS Testing (XSStrike)"
+                        else
+                            echo -e "${RED}❌ XSStrike no está instalado.${NC}"
+                            echo -e "${YELLOW}💡 Para instalar XSStrike:${NC} git clone https://github.com/s0md3v/XSStrike.git && cd XSStrike && pip install -r requirements.txt"
+                        fi
+                    fi
                 fi
                 ;;
             5)
                 echo ""
                 echo -e "${YELLOW}🔍 WIFI HACKING COMANDOS:${NC}"
                 echo ""
+                if command -v aircrack-ng &>/dev/null; then
+                    echo -e "${GREEN}✅ aircrack-ng detectado en el sistema.${NC}"
+                else
+                    echo -e "${YELLOW}💡 Para instalar suite aircrack-ng:${NC} sudo apt install aircrack-ng"
+                fi
                 echo "• Ver interfaces: airmon-ng"
                 echo "• Modo monitor: airmon-ng start wlan0"
                 echo "• Capturar handshake: airodump-ng wlan0mon"
@@ -555,13 +930,22 @@ suite_pentesting() {
             6)
                 read -p "🔑 Archivo hash para John: " archivo_hash
                 if [ -n "$archivo_hash" ]; then
-                    echo ""
-                    echo -e "${YELLOW}🔍 JOHN THE RIPPER COMANDOS:${NC}"
-                    echo ""
-                    echo "• Identificar hash: john --format=? --list=formats"
-                    echo "• Ataque de diccionario: john --format=[FORMATO] --wordlist=rockyou.txt $archivo_hash"
-                    echo "• Ataque incremental: john --format=[FORMATO] --incremental $archivo_hash"
-                    echo "• Mostrar passwords: john --show $archivo_hash"
+                    if confirm_risk "John The Ripper (Hash Cracking)" "MEDIO" "$archivo_hash"; then
+                        if check_command john; then
+                            read -p "📖 Ruta a Wordlist [default: /usr/share/wordlists/rockyou.txt]: " wl_val
+                            wl_val="${wl_val:-/usr/share/wordlists/rockyou.txt}"
+                            echo ""
+                            echo -e "${YELLOW}🔍 Ejecutando: john --wordlist=$wl_val $archivo_hash${NC}"
+                            echo ""
+                            output=$(john --wordlist="$wl_val" "$archivo_hash" 2>&1)
+                            echo "$output"
+                            save_output "[JOHN $archivo_hash]\n$output"
+                            type track_technique &>/dev/null && track_technique "T1110.002" "Password Cracking (John the Ripper)"
+                        else
+                            echo ""
+                            echo -e "${YELLOW}💡 Para instalar John The Ripper:${NC} sudo apt install john"
+                        fi
+                    fi
                 fi
                 ;;
             7)
@@ -1148,6 +1532,28 @@ chat_libre() {
 }
 
 # ============================================
+# Ejecuta nmap sigiloso con sudo y muestra resultados
+_run_stealth_nmap() {
+  local label="$1"
+  local objetivo="$2"
+  shift 2
+
+  if ! check_command nmap; then
+      echo -e "${YELLOW}💡 Para instalar nmap:${NC} sudo apt install nmap"
+      return 1
+  fi
+
+  local cmd_display="sudo nmap $* $objetivo"
+  echo ""
+  echo -e "${YELLOW}▶ Ejecutando: ${cmd_display}${NC}"
+  echo ""
+  local output
+  output=$(sudo nmap "$@" "$objetivo" 2>&1)
+  echo "$output"
+  save_output "[${label} ${objetivo}]\n${output}"
+  type track_technique &>/dev/null && track_technique "T1046" "Network Service Scanning ($label)"
+}
+
 # 8. ESCANEO SIGILOSO (IMPLEMENTADO)
 # ============================================
 escaneo_sigiloso() {
@@ -1187,6 +1593,7 @@ escaneo_sigiloso() {
                     echo "📊 EXPLICACIÓN:"
                     echo "Envía paquetes SYN y analiza respuestas SYN-ACK"
                     echo "No completa el handshake TCP (más sigiloso)"
+                    _run_stealth_nmap "SYN STEALTH" "$objetivo" -sS -T2 -Pn
                 fi
                 ;;
             2)
@@ -1201,6 +1608,7 @@ escaneo_sigiloso() {
                     echo "📊 EXPLICACIÓN:"
                     echo "Envía paquetes con flags FIN, URG y PUSH activados"
                     echo "Como un árbol de Navidad (XMAS)"
+                    _run_stealth_nmap "XMAS TREE" "$objetivo" -sX -T2 -Pn
                 fi
                 ;;
             3)
@@ -1215,6 +1623,7 @@ escaneo_sigiloso() {
                     echo "📊 EXPLICACIÓN:"
                     echo "Envía paquetes solo con flag FIN activado"
                     echo "Útil para evadir firewalls simples"
+                    _run_stealth_nmap "FIN SCAN" "$objetivo" -sF -T2 -Pn
                 fi
                 ;;
             4)
@@ -1228,6 +1637,7 @@ escaneo_sigiloso() {
                     echo "📊 EXPLICACIÓN:"
                     echo "Envía paquetes sin ningún flag activado"
                     echo "Completamente 'null'"
+                    _run_stealth_nmap "NULL SCAN" "$objetivo" -sN -T2 -Pn
                 fi
                 ;;
             5)
@@ -1243,6 +1653,7 @@ escaneo_sigiloso() {
                     echo "⚠️ ADVERTENCIA:"
                     echo "Los escaneos UDP son muy lentos"
                     echo "Puede tomar horas para todos los puertos"
+                    _run_stealth_nmap "UDP SCAN" "$objetivo" -sU -F -T2 -Pn
                 fi
                 ;;
             6)
@@ -2062,120 +2473,16 @@ _apt_personalizado() {
 # ============================================================
 # 13. GAP ANALYSIS — HEAT MAP MITRE ATT&CK
 # ============================================================
+# 13. GAP ANALYSIS — HEAT MAP MITRE ATT&CK (DYNÁMICO)
+# ============================================================
 analizar_brechas() {
-    preguntar_objetivo || return
     show_banner
-    echo -e "${GREEN}╔══════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║      ${CYAN}📈 GAP ANALYSIS — HEAT MAP MITRE${NC}           ${GREEN}║${NC}"
-    echo -e "${GREEN}║  ${YELLOW}✅ Probada+Mitigada  🟡 Sin mitigar  ❌ No probada${NC} ${GREEN}║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "${CYAN}🎯 Evaluando postura contra: ${TARGET}${NC}"
-    echo -e "${YELLOW}Ingresa técnicas probadas separadas por coma${NC}"
-    echo -e "${BLUE}Ejemplo: T1566,T1059,T1003,T1078${NC}"
-    echo ""
-    read -p "✅ Técnicas probadas Y mitigadas: " input_verde
-    read -p "🟡 Técnicas probadas SIN mitigación: " input_amarillo
-    echo ""
-
-    # Normalizar inputs
-    declare -A probadas_verde
-    declare -A probadas_amarillo
-    IFS=',' read -ra v_arr <<< "$input_verde"
-    for t in "${v_arr[@]}"; do
-        t="${t// /}"
-        [[ -n "$t" ]] && probadas_verde["${t^^}"]=1
-    done
-    IFS=',' read -ra a_arr <<< "$input_amarillo"
-    for t in "${a_arr[@]}"; do
-        t="${t// /}"
-        [[ -n "$t" ]] && probadas_amarillo["${t^^}"]=1
-    done
-
-    # Definir técnicas representativas por táctica (4 por táctica)
-    declare -A HEAT_TECNICAS
-    HEAT_TECNICAS["TA0043"]="T1595 T1592 T1589 T1598"
-    HEAT_TECNICAS["TA0042"]="T1583 T1584 T1608 T1587"
-    HEAT_TECNICAS["TA0001"]="T1566 T1190 T1133 T1078"
-    HEAT_TECNICAS["TA0002"]="T1059 T1053 T1204 T1047"
-    HEAT_TECNICAS["TA0003"]="T1547 T1505 T1136 T1078"
-    HEAT_TECNICAS["TA0004"]="T1548 T1134 T1068 T1055"
-    HEAT_TECNICAS["TA0005"]="T1027 T1055 T1562 T1218"
-    HEAT_TECNICAS["TA0006"]="T1003 T1558 T1555 T1056"
-    HEAT_TECNICAS["TA0007"]="T1082 T1083 T1057 T1018"
-    HEAT_TECNICAS["TA0008"]="T1021 T1550 T1080 T1563"
-    HEAT_TECNICAS["TA0009"]="T1114 T1005 T1039 T1113"
-    HEAT_TECNICAS["TA0011"]="T1071 T1095 T1572 T1090"
-    HEAT_TECNICAS["TA0010"]="T1048 T1041 T1567 T1020"
-    HEAT_TECNICAS["TA0040"]="T1485 T1486 T1490 T1498"
-
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}       🗺️  HEAT MAP — MITRE ATT&CK Enterprise${NC}"
-    echo -e "${CYAN}             Objetivo: ${TARGET}${NC}"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-
-    local total_tecs=0
-    local total_verde=0
-    local total_amarillo=0
-
-    for tid in "${MITRE_ORDEN[@]}"; do
-        local tactica_short="${MITRE_TACTICAS[$tid]}"
-        # Primera parte antes del |
-        local emoji="${tactica_short%%|*}"
-        printf "  ${CYAN}%-40s${NC}" "$emoji"
-        local tecs="${HEAT_TECNICAS[$tid]}"
-        for tec in $tecs; do
-            ((total_tecs++))
-            if [[ "${probadas_verde[$tec]+_}" ]]; then
-                printf "${GREEN}✅%-7s${NC}" "$tec"
-                ((total_verde++))
-            elif [[ "${probadas_amarillo[$tec]+_}" ]]; then
-                printf "${YELLOW}🟡%-7s${NC}" "$tec"
-                ((total_amarillo++))
-            else
-                printf "${RED}❌%-7s${NC}" "$tec"
-            fi
-        done
-        echo ""
-    done
-
-    local total_cubierto=$(( total_verde + total_amarillo ))
-    local pct=0
-    (( total_tecs > 0 )) && pct=$(( total_cubierto * 100 / total_tecs ))
-
-    echo ""
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "  ${GREEN}✅ Probadas+Mitigadas:${NC} $total_verde"
-    echo -e "  ${YELLOW}🟡 Probadas sin mitigación:${NC} $total_amarillo"
-    echo -e "  ${RED}❌ No probadas:${NC} $(( total_tecs - total_cubierto ))"
-    echo -e "  ${CYAN}📊 Cobertura total: ${YELLOW}$total_cubierto / $total_tecs (${pct}%)${NC}"
-    echo ""
-    if (( pct >= 60 )); then
-        echo -e "  ${GREEN}✅ Postura de seguridad BUENA${NC}"
-    elif (( pct >= 30 )); then
-        echo -e "  ${YELLOW}⚠️  Postura MEJORABLE — muchas técnicas sin cubrir${NC}"
+    if check_command "python3" "sudo apt install python3"; then
+        python3 "$SCRIPT_DIR/dynamic_gap_analysis.py"
     else
-        echo -e "  ${RED}🚨 Postura CRÍTICA — revisar controles urgente${NC}"
+        echo -e "${RED}❌ python3 no está disponible. Instale python3 para ejecutar el Gap Analysis Dinámico.${NC}"
     fi
     echo ""
-    read -p "💾 ¿Deseas guardar este análisis avanzado? (s/n): " resp_save
-    if [[ "${resp_save,,}" == "s" ]]; then
-        local gap_file="gap_analysis_${TARGET}_$(date +%s).txt"
-        {
-            echo "=================================================="
-            echo "  📈 GAP ANALYSIS — HEAT MAP MITRE"
-            echo "  Objetivo: $TARGET | Fecha: $(date)"
-            echo "=================================================="
-            echo "✅ Probadas mitigadas: $total_verde"
-            echo "🟡 Probadas sin mitigación: $total_amarillo"
-            echo "❌ No probadas: $(( total_tecs - total_cubierto ))"
-            echo "📊 Cobertura total: $total_cubierto / $total_tecs (${pct}%)"
-            echo "=================================================="
-        } > "$gap_file"
-        echo -e "${GREEN}✅ Análisis guardado exitosamente en: $gap_file${NC}"
-    fi
-    save_output "[GAP ANALYSIS] Cobertura: $total_cubierto/$total_tecs ($pct%)"
     read -p "↵ Enter para continuar..." _
 }
 
@@ -2226,7 +2533,7 @@ while true; do
         10) modo_purple_team ;;
         11) menu_post_explotacion ;;
         12) simular_apt ;;
-        13) ./run_gap_analysis.sh ;;
+        13) analizar_brechas ;;
         14)
             python3 nmap_ai.py
             ;;
