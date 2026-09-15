@@ -522,7 +522,7 @@ escaneo_web() {
                 url="${url:-https://$TARGET}"
                 if [ -n "$url" ]; then
                     echo ""
-                    if command -v gobuster &>/dev/null; then
+                    if check_command "gobuster" "sudo apt install gobuster"; then
                         read -p "📖 Ruta Wordlist [default: /usr/share/wordlists/dirb/common.txt]: " wl_val
                         wl_val="${wl_val:-/usr/share/wordlists/dirb/common.txt}"
                         if [[ -f "$wl_val" ]]; then
@@ -543,9 +543,6 @@ escaneo_web() {
                         echo "$output"
                         save_output "[DIRB $url]\n$output"
                         type track_technique &>/dev/null && track_technique "T1083" "File and Directory Discovery (Dirb)"
-                    else
-                        echo -e "${RED}❌ Ni gobuster ni dirb están instalados.${NC}"
-                        echo -e "${YELLOW}💡 Para instalar gobuster o dirb:${NC} sudo apt install gobuster  (o sudo apt install dirb)"
                     fi
                 fi
                 ;;
@@ -760,6 +757,7 @@ analisis_red() {
                 if [[ -n "$output" ]]; then
                     echo "$output"
                     save_output "[NETSTAT LOCAL]\n$output"
+                    type track_technique &>/dev/null && track_technique "T1049" "System Network Connections Discovery (Netstat)"
                 fi
                 ;;
             6)
@@ -825,6 +823,7 @@ suite_pentesting() {
                     read -p "🎮 ¿Deseas lanzar msfconsole interactivo ahora? (s/N): " launch_msf
                     if [[ "${launch_msf,,}" =~ ^s ]]; then
                         if confirm_risk "Metasploit Framework (msfconsole)" "ALTO" "${TARGET:-[IP]}"; then
+                            type track_technique &>/dev/null && track_technique "T1210" "Exploitation of Remote Services (Metasploit)"
                             msfconsole
                         fi
                     else
