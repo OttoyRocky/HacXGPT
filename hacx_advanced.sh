@@ -232,7 +232,7 @@ reconocimiento_basico() {
                         output=$(whois "$dominio" 2>&1 | head -60)
                     else
                         echo -e "${CYAN}ℹ️ 'whois' no disponible localmente; consultando servidor RDAP REST...${NC}"
-                        output=$(curl -s "https://rdap.org/domain/$dominio" | python3 -c "
+                        output=$(anon_exec "curl -s 'https://rdap.org/domain/$dominio'" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -506,7 +506,7 @@ escaneo_web() {
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: whatweb $url${NC}"
                         echo ""
-                        output=$(whatweb "$url" 2>&1)
+                        output=$(anon_exec "whatweb '$url'" 2>&1)
                         echo "$output"
                         save_output "[WHATWEB $url]\n$output"
                         type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (WhatWeb)"
@@ -523,7 +523,7 @@ escaneo_web() {
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: nikto -h $url${NC}"
                         echo ""
-                        output=$(nikto -h "$url" 2>/dev/null)
+                        output=$(anon_exec "nikto -h '$url'" 2>/dev/null)
                         echo "$output"
                         save_output "[NIKTO $url]\n$output"
                         type track_technique &>/dev/null && track_technique "T1595" "Active Scanning / Web Vulnerability Scan (Nikto)"
@@ -543,10 +543,10 @@ escaneo_web() {
                         if [[ -f "$wl_val" ]]; then
                             echo -e "${YELLOW}🔍 Ejecutando: gobuster dir -u $url -w $wl_val${NC}"
                             echo ""
-                            output=$(gobuster dir -u "$url" -w "$wl_val" -q 2>&1 | head -50)
+                            output=$(anon_exec "gobuster dir -u '$url' -w '$wl_val' -q" 2>&1 | head -50)
                         else
                             echo -e "${YELLOW}⚠️ Wordlist no encontrada en $wl_val. Ejecutando gobuster con wordlist reducida...${NC}"
-                            output=$(gobuster dir -u "$url" -w <(echo -e "admin\nlogin\nwp-admin\napi\nbackup\nconfig\ndashboard\nrobots.txt") -q 2>&1)
+                            output=$(anon_exec "gobuster dir -u '$url' -w /tmp/hacxgpt_wl_$$.txt -q" 2>&1)
                         fi
                         echo "$output"
                         save_output "[GOBUSTER $url]\n$output"
@@ -569,7 +569,7 @@ escaneo_web() {
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: curl -I -L $url${NC}"
                         echo ""
-                        output=$(curl -I -L "$url" 2>&1)
+                        output=$(anon_exec "curl -I -L '$url'" 2>&1)
                         echo "$output"
                         save_output "[HEADERS $url]\n$output"
                         type track_technique &>/dev/null && track_technique "T1592" "Gather Victim Host Information (HTTP Headers)"
@@ -615,7 +615,7 @@ escaneo_web() {
                     if command -v sslscan &>/dev/null; then
                         echo -e "${YELLOW}🔍 Ejecutando: sslscan $dominio${NC}"
                         echo ""
-                        output=$(sslscan --no-failed "$dominio" 2>&1)
+                        output=$(anon_exec "sslscan --no-failed '$dominio'" 2>&1)
                     elif command -v testssl.sh &>/dev/null || command -v testssl &>/dev/null; then
                         testssl_cmd=$(command -v testssl.sh || command -v testssl)
                         echo -e "${YELLOW}🔍 Ejecutando: $testssl_cmd $dominio${NC}"
@@ -682,7 +682,7 @@ analisis_red() {
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: nmap -F $objetivo${NC}"
                         echo ""
-                        output=$(nmap -F "$objetivo" 2>&1)
+                        output=$(anon_exec "nmap -F '$objetivo'" 2>&1)
                         echo "$output"
                         save_output "[NMAP BASIC $objetivo]\n$output"
                         type track_technique &>/dev/null && track_technique "T1046" "Network Service Scanning (Nmap Quick)"
@@ -699,7 +699,7 @@ analisis_red() {
                         echo ""
                         echo -e "${YELLOW}🔍 Ejecutando: nmap -sV -sC -T4 $objetivo${NC}"
                         echo ""
-                        output=$(nmap -sV -sC -T4 "$objetivo" 2>&1)
+                        output=$(anon_exec "nmap -sV -sC -T4 '$objetivo'" 2>&1)
                         echo "$output"
                         save_output "[NMAP ADVANCED $objetivo]\n$output"
                         type track_technique &>/dev/null && track_technique "T1046" "Network Service Scanning (Nmap Advanced)"
@@ -875,7 +875,7 @@ MSFEOF
                             echo ""
                             echo -e "${YELLOW}🔍 Ejecutando: sqlmap -u \"$url\" --batch --dbs${NC}"
                             echo ""
-                            output=$(sqlmap -u "$url" --batch --dbs 2>&1)
+                            output=$(anon_exec "sqlmap -u '$url' --batch --dbs" 2>&1)
                             echo "$output"
                             save_output "[SQLMAP $url]\n$output"
                             type track_technique &>/dev/null && track_technique "T1190" "Exploit Public-Facing Application (SQLi)"
@@ -899,7 +899,7 @@ MSFEOF
                             echo ""
                             echo -e "${YELLOW}🔍 Ejecutando: hydra -l $user_val -P $wl_val $objetivo${NC}"
                             echo ""
-                            output=$(hydra -l "$user_val" -P "$wl_val" "$objetivo" 2>&1)
+                            output=$(anon_exec "hydra -l '$user_val' -P '$wl_val' '$objetivo'" 2>&1)
                             echo "$output"
                             save_output "[HYDRA $objetivo]\n$output"
                             type track_technique &>/dev/null && track_technique "T1110" "Brute Force (Hydra)"
@@ -1303,14 +1303,14 @@ herramientas_avanzadas() {
                     
                     if check_command "recon-ng" "sudo apt install recon-ng"; then
                         echo -e "${CYAN}▶ Lanzando recon-ng en modo batch...${NC}"
-                        output=$(recon-ng -m hackertarget -c "options set SOURCE $target_osint; run; exit" 2>&1)
+                        output=$(anon_exec "recon-ng -m hackertarget -c 'options set SOURCE $target_osint; run; exit'" 2>&1)
                         echo "$output"
                         save_output "[RECON-NG $target_osint]\n$output"
                         type track_technique &>/dev/null && track_technique "T1593" "Search Open Technical Databases (recon-ng)"
                     elif command -v theHarvester &>/dev/null; then
                         echo -e "${YELLOW}ℹ️ recon-ng no disponible, usando theHarvester como fallback...${NC}"
                         echo -e "${CYAN}▶ Ejecutando theHarvester...${NC}"
-                        output=$(theHarvester -d "$target_osint" -b google,bing 2>&1)
+                        output=$(anon_exec "theHarvester -d '$target_osint' -b google,bing" 2>&1)
                         echo "$output"
                         save_output "[THEHARVESTER OSINT $target_osint]\n$output"
                         type track_technique &>/dev/null && track_technique "T1589" "Gather Victim Identity Information (theHarvester)"
