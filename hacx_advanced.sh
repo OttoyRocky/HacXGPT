@@ -48,6 +48,26 @@ CYAN='\e[0;36m'
 NC='\e[0m' # No Color
 
 # ============================================
+# WORDLIST — auto-descarga rockyou si no existe
+# ============================================
+ensure_rockyou() {
+    local wl="/usr/share/wordlists/rockyou.txt"
+    if [ ! -f "$wl" ]; then
+        echo -e "${YELLOW}⚠️  rockyou.txt no encontrada en $wl${NC}"
+        echo -e "${CYAN}▶ Descargando rockyou.txt (~130MB)...${NC}"
+        sudo mkdir -p /usr/share/wordlists
+        sudo curl -L --progress-bar https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt -o "$wl"
+        if [ -f "$wl" ]; then
+            echo -e "${GREEN}✅ rockyou.txt descargada correctamente${NC}"
+        else
+            echo -e "${RED}❌ Error al descargar rockyou.txt — verificá tu conexión${NC}"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# ============================================
 # SISTEMA DE OBJETIVO GLOBAL
 # ============================================
 TARGET=""       # Objetivo global persistente (IP o dominio)
@@ -894,6 +914,7 @@ MSFEOF
                         if check_command hydra; then
                             read -p "👤 Usuario [default: admin]: " user_val
                             user_val="${user_val:-admin}"
+                            ensure_rockyou || return
                             read -p "📖 Ruta a Wordlist [default: /usr/share/wordlists/rockyou.txt]: " wl_val
                             wl_val="${wl_val:-/usr/share/wordlists/rockyou.txt}"
                             echo ""
@@ -958,6 +979,7 @@ MSFEOF
                 if [ -n "$archivo_hash" ]; then
                     if confirm_risk "John The Ripper (Hash Cracking)" "MEDIO" "$archivo_hash"; then
                         if check_command john; then
+                            ensure_rockyou || return
                             read -p "📖 Ruta a Wordlist [default: /usr/share/wordlists/rockyou.txt]: " wl_val
                             wl_val="${wl_val:-/usr/share/wordlists/rockyou.txt}"
                             echo ""
