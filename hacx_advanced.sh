@@ -1266,31 +1266,121 @@ herramientas_avanzadas() {
                 echo ""
                 echo -e "${YELLOW}🦠 ANÁLISIS DE MALWARE:${NC}"
                 echo ""
-                echo "• VirusTotal: analyze archivo.exe"
-                echo "• Strings analysis: strings archivo.exe"
-                echo "• PE analysis: peframe archivo.exe"
-                echo "• Sandbox: cuckoo sandbox"
-                echo "• YARA rules: yara -r reglas.yara directorio/"
+                read -p "📁 Ruta del archivo a analizar: " mal_file
+                if [ -z "$mal_file" ] || [ ! -f "$mal_file" ]; then
+                    echo -e "${RED}❌ Archivo no encontrado: $mal_file${NC}"
+                else
+                    local output=""
+                    echo ""
+                    if check_command strings; then
+                        echo -e "${CYAN}▶ Strings analysis...${NC}"
+                        output=$(strings "$mal_file" 2>&1 | head -50)
+                        echo "$output"
+                        save_output "[STRINGS $mal_file]\n$output"
+                    fi
+                    if check_command yara; then
+                        echo -e "${CYAN}▶ YARA scan...${NC}"
+                        local yara_out=$(yara -r /usr/share/yara/ "$mal_file" 2>&1 || echo "No hay reglas YARA en /usr/share/yara/ o no se encontraron coincidencias")
+                        echo "$yara_out"
+                        save_output "[YARA $mal_file]\n$yara_out"
+                    else
+                        echo -e "${YELLOW}💡 Instalar YARA: sudo apt install yara${NC}"
+                    fi
+                    if check_command file; then
+                        echo -e "${CYAN}▶ Tipo de archivo:${NC}"
+                        file "$mal_file"
+                    fi
+                    type track_technique &>/dev/null && track_technique "T1204" "User Execution / Malware Analysis"
+                fi
                 ;;
             2)
                 echo ""
                 echo -e "${YELLOW}🔬 INGENIERÍA INVERSA:${NC}"
                 echo ""
-                echo "• Desensamblar: objdump -d archivo"
-                echo "• Debugging: gdb archivo"
-                echo "• Análisis estático: radare2 archivo"
-                echo "• Decompilar: Ghidra, IDA Pro"
-                echo "• Análisis de binarios: binwalk archivo"
+                read -p "📁 Ruta del binario a analizar: " bin_file
+                if [ -z "$bin_file" ] || [ ! -f "$bin_file" ]; then
+                    echo -e "${RED}❌ Archivo no encontrado: $bin_file${NC}"
+                else
+                    local output=""
+                    echo ""
+                    if check_command objdump; then
+                        echo -e "${CYAN}▶ Desensamblando con objdump...${NC}"
+                        output=$(objdump -d "$bin_file" 2>&1 | head -80)
+                        echo "$output"
+                        save_output "[OBJDUMP $bin_file]\n$output"
+                    fi
+                    if check_command binwalk; then
+                        echo -e "${CYAN}▶ binwalk analysis...${NC}"
+                        local bw_out=$(binwalk "$bin_file" 2>&1)
+                        echo "$bw_out"
+                        save_output "[BINWALK $bin_file]\n$bw_out"
+                    else
+                        echo -e "${YELLOW}💡 Instalar binwalk: sudo apt install binwalk${NC}"
+                    fi
+                    if check_command radare2; then
+                        echo -e "${CYAN}▶ radare2 info...${NC}"
+                        local r2_out=$(radare2 -A -q -c "iI" "$bin_file" 2>&1)
+                        echo "$r2_out"
+                        save_output "[RADARE2 $bin_file]\n$r2_out"
+                    else
+                        echo -e "${YELLOW}💡 Instalar radare2: sudo apt install radare2${NC}"
+                    fi
+                    type track_technique &>/dev/null && track_technique "T1059" "Command and Scripting Interpreter / RE"
+                fi
                 ;;
             3)
                 echo ""
                 echo -e "${YELLOW}🔍 FORENSE DIGITAL:${NC}"
                 echo ""
-                echo "• Imágenes de disco: dd if=/dev/sda of=imagen.dd"
-                echo "• Análisis de memoria: volatility -f memory.dump"
-                echo "• Recuperación de archivos: photorec"
-                echo "• Análisis de logs: log2timeline"
-                echo "• Autopsy: interfaz gráfica forense"
+                echo "1) Analizar imagen de disco"
+                echo "2) Analizar dump de memoria"
+                echo "3) Recuperar archivos eliminados"
+                read -p "🎯 Selecciona [1-3]: " for_opcion
+                case $for_opcion in
+                    1)
+                        read -p "📁 Ruta de la imagen de disco (.dd/.img): " disk_img
+                        if [ -f "$disk_img" ]; then
+                            if check_command file; then file "$disk_img"; fi
+                            if check_command strings; then
+                                echo -e "${CYAN}▶ Extrayendo strings de la imagen...${NC}"
+                                local out=$(strings "$disk_img" 2>&1 | grep -E "(password|user|admin|secret|key)" | head -30)
+                                echo "$out"
+                                save_output "[DISK FORENSICS $disk_img]\n$out"
+                            fi
+                        else
+                            echo -e "${RED}❌ Imagen no encontrada${NC}"
+                        fi
+                        ;;
+                    2)
+                        read -p "📁 Ruta del memory dump: " mem_dump
+                        if [ -f "$mem_dump" ]; then
+                            if check_command volatility3; then
+                                echo -e "${CYAN}▶ volatility3 imageinfo...${NC}"
+                                local vol_out=$(volatility3 -f "$mem_dump" windows.info 2>&1 | head -30)
+                                echo "$vol_out"
+                                save_output "[VOLATILITY $mem_dump]\n$vol_out"
+                            elif check_command vol; then
+                                local vol_out=$(vol -f "$mem_dump" windows.info 2>&1 | head -30)
+                                echo "$vol_out"
+                                save_output "[VOLATILITY $mem_dump]\n$vol_out"
+                            else
+                                echo -e "${YELLOW}💡 Instalar: pip install volatility3 --break-system-packages${NC}"
+                            fi
+                        else
+                            echo -e "${RED}❌ Dump no encontrado${NC}"
+                        fi
+                        ;;
+                    3)
+                        read -p "📁 Dispositivo o imagen a recuperar (ej: /dev/sdb o imagen.dd): " rec_dev
+                        if check_command photorec; then
+                            echo -e "${CYAN}▶ Lanzando photorec...${NC}"
+                            photorec "$rec_dev"
+                        else
+                            echo -e "${YELLOW}💡 Instalar: sudo apt install testdisk${NC}"
+                        fi
+                        ;;
+                esac
+                type track_technique &>/dev/null && track_technique "T1005" "Data from Local System / Forensics"
                 ;;
             4)
                 read -p "🌐 Objetivo para recon OSINT (Dominio/IP) [default: ${TARGET:-ejemplo.com}]: " target_osint
